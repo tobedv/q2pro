@@ -884,9 +884,10 @@ sampled, instead of after the server round-trip. The server's echoed
 muzzle flash is recognized and consumed so nothing plays twice. Fire
 effects only — bullets, hit detection, blood and damage remain fully
 server-authoritative, so this cannot create or remove a hit. Predicted
-weapons: MK23, akimbo pistols, MP5, M4, M3 shotgun, and handcannon. The
-SSG sniper rifle is deliberately not predicted (rarely used, and its
-zoom state machine makes prediction fragile). The MP5/M4 fire-mode toggle (`weapon`
+weapons: MK23, akimbo pistols, MP5, M4, M3 shotgun, handcannon, and the
+SSG sniper rifle (including zoomed shots; predictions pause for 700 ms
+after a zoom change, mirroring the server's zoom-busy window — note
+this covers the fire only, the zoom visual itself is server-driven). The MP5/M4 fire-mode toggle (`weapon`
 command, full auto vs 3 round burst) is mirrored so burst mode predicts
 3 shots per trigger pull (with the server's ~700 ms burst recovery
 respected between pulls), and the MK23's semi/auto toggle likewise.

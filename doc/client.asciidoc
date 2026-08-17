@@ -511,7 +511,8 @@ cl_xerp_fire::
     the server round-trip; the echoed server muzzle flash is consumed so
     nothing plays twice. Fire effects only — hit detection and damage
     remain fully server-authoritative. Predicts MK23, akimbo, MP5, M4,
-    M3 and handcannon; the SSG, knife, grenades and silenced shots keep
+    M3, handcannon and the SSG (fire only, incl. zoomed shots; 700 ms
+    hold after zoom changes); knife, grenades and silenced shots keep
     standard server-driven behavior. Value 2 additionally logs every fire decision and
     per-shot click-to-echo latency to the console (persist with
     "logfile 2"). Inactive during demo playback and spectating.

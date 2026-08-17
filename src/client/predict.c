@@ -388,9 +388,11 @@ static const xf_weapon_t xf_weapons[] = {
     { "w_super90", "v_shotg",  "m3",     MZ_SHOTGUN,      900, false, 0 },
     { "w_cannon",  "v_cannon", "hc",     MZ_SSHOTGUN,    1500, false, 0 },
     { "w_akimbo",  "v_dual",   "akimbo", MZ_BLASTER,      400, true,  1 },
-    // absent on purpose: the SSG (rarely used, and its zoom state machine
-    // makes prediction fragile — field decision to keep it server-driven),
-    // knife and grenades — those keep today's server-echo behavior
+    { "w_sniper",  "v_sniper", "ssg",    MZ_HYPERBLASTER, 1300, false, 0 },
+    // The SSG's FIRE is predicted (field-validated, including zoomed shots
+    // once the zoom-busy window has passed) — only the zoom VISUAL
+    // prediction (cl_xerp_zoom) was invalidated and stays off.
+    // Absent on purpose: knife and grenades keep server-echo behavior.
 };
 
 // identify the held weapon: primary source is the own player entity's vwep
