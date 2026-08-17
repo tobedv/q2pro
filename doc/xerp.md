@@ -164,23 +164,33 @@ own data, and **removed** rather than left as dormant switches:
   echo-driven reconstruction that steps on raw own-entity M4 flashes,
   renders nothing, and logs `|kick − A|` per render frame
   (`cl_xerp_debug 3`: `xerpview ... res` + `xerpkick` decisions; grade
-  with `tools/xerpkick-residual.py`). Validated at **100.0% exact —
-  zero residual on every render frame** in two environments: a local
-  10 Hz listen server (real game DLL), and the remote AWS field server
-  (production-style q2proded r1 Jul 2024 + Q2Admin, sv_fps 10,
-  llsound 1, 11 ms RTT) — across full mags with dry-fire tails, tap
-  sprays with quick re-presses and sub-think release blips, burst mode
-  (correctly flat while real 3-round bursts echoed), and crouched mags.
-  Contamination is quantified and stays server-channel-only, exactly as
-  designed: sprint-spraying showed up to ~+1.25° of run_pitch + bob +
-  landing kicks riding the kick channel (the mirror correctly does not
-  follow it), and the 2026-08-17 field traces show damage kicks
-  additive over the −16 cap with the DAMAGE_TIME decay. Still open:
-  framediv > 1 sound-grid deferral (20/30 Hz servers — the production
-  server runs 10 Hz), behavior under real packet loss, and phase B's
-  clamp design for how contamination passes through the S − A render.
-  Prediction may only be revived by driving this same machine from
-  predicted shots, with Tobias's eye in the loop. Lessons kept: discrete events can be time-shifted;
+  with `tools/xerpkick-residual.py`). Phase A validated at **100.0%
+  exact — zero residual on every render frame** on both a local 10 Hz
+  listen server and the remote AWS field server (q2proded r1 Jul 2024 +
+  Q2Admin, sv_fps 10, llsound 1, 11 ms RTT), across full mags, taps
+  with sub-think release blips, burst mode (flat), and crouched mags.
+  Contamination stays server-channel-only as designed (sprint-spraying:
+  up to ~+1.25° of run_pitch + bob + landing kicks; damage kicks ride
+  additively over the −16 cap with the DAMAGE_TIME decay).
+
+  **Phase B ships on top of that proof**: the same machine, driven by
+  predicted shots (S), renders `server_kick − A + S` — the climb starts
+  at the click instead of one round-trip later. The generator's shot
+  count has one source of truth (echoed shots + in-flight predictions,
+  evaluated at render time), so no shot can ever double-step at any
+  RTT; its curve is a chain of back-to-back 100 ms ladder pieces, so no
+  rendered slope can exceed classic in any phase; it releases with the
+  trigger, on leaving normal play, and after a 230 ms stall (empty
+  clip, watchdog, rejection — a stall parks it until a fresh click so
+  dry-fire can't resurrect the climb). Field-validated on the AWS
+  server: 100.0% exact cancellation, zero over-rate samples, identical
+  −16.00 depths on every channel, and measured onset leads of
+  66–109 ms at 11 ms RTT. Damage/fall kicks pass through untouched;
+  demos and `cl_xerp_fire 0` render pure classic. At `cl_xerp_debug 2`
+  every spray logs one sparse summary line (echoed vs predicted steps,
+  depth, lead) plus rare RESIDUE anomalies, so real games grade
+  themselves from `logs/xerp.log`. The remaining sign-off is the eye:
+  the trace equality above is necessary, not sufficient. Lessons kept: discrete events can be time-shifted;
   continuous curves must be *regenerated*; regeneration demands the
   true state machine, proven passively before it touches the screen.
 - **Predicted sniper zoom** (`cl_xerp_zoom`): telemetry showed zoom-in

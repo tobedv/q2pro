@@ -622,9 +622,31 @@ static struct {
     unsigned    last_fire_time;     // realtime of that flash, for trace gating
     unsigned    spray_start;        // realtime of the spray's first step
     int         steps;              // fired steps this spray (past the cap too)
+    bool        residue_flagged;    // one anomaly line per spray, not a flood
     int         frames[XKA_RING];   // ring: frame number ...
     float       values[XKA_RING];   // ... and that frame's climb pitch
 } xka;
+
+// phase B generator (S): the same machine driven by predicted shots —
+// state lives up here so the spray summary can pair both sides
+#define XKG_STALL   230     // ms without a predicted step = stream over
+
+static struct {
+    int         shots;          // target rung count (mirrored shots)
+    int         base;           // rungs fully rendered when the running
+                                // chain of 100 ms pieces began
+    unsigned    chain_start;    // when that chain began; pieces play
+                                // back-to-back, one rung per 100 ms
+    float       rel_from;       // release piece: rel_from -> 0 ...
+    unsigned    rel_time;       // ... starting here (0 = not releasing)
+    unsigned    last_step;      // realtime of the last step
+    unsigned    spray_start;    // first step of this generator spray
+    int         steps;          // steps this spray, for the summary
+    bool        stalled;        // parked by a stall until a fresh click,
+                                // so dry-fire can't resurrect the climb
+} xkg;
+
+static void xkg_step(void);
 
 // the wire's OFFSET2CHAR quantization (msg.c): trunc toward zero, clip, /4
 static float xka_quantize(float v)
@@ -652,12 +674,24 @@ static float xka_get(int frame)
 
 static void xka_end_spray(const char *why)
 {
-    if (SCR_XerpDebugLevel() >= 3)
-        CL_XerpLog("xerpkick %u: spray ended - %d steps, %.2f deep, %u ms (%s)\n",
-                   cls.realtime, xka.steps, xka_cur(),
-                   cls.realtime - xka.spray_start, why);
+    // one sparse summary per spray at normal telemetry level (debug 2) —
+    // enough to grade real games from logs/xerp.log after the fact:
+    // echoed vs predicted step counts (mismatch = loss or rejection),
+    // depth, and how far ahead of the server the predicted onset ran
+    if (SCR_XerpDebugLevel() >= 2) {
+        int lead = 0;
+
+        if (xkg.spray_start &&
+            xka.spray_start - xkg.spray_start < 1000)
+            lead = (int)(xka.spray_start - xkg.spray_start);
+        CL_XerpLog("xerpkick %u: spray A=%d S=%d deep %.2f, %u ms, "
+                   "lead %d ms (%s)\n",
+                   cls.realtime, xka.steps, xkg.steps, xka_cur(),
+                   cls.realtime - xka.spray_start, lead, why);
+    }
     xka.shots = 0;
     xka.steps = 0;
+    xka.residue_flagged = false;
 }
 
 // raw own-entity muzzle flash, called for every svc_muzzleflash before (and
@@ -695,6 +729,25 @@ void CL_XerpKickEcho(void)
     if (SCR_XerpDebugLevel() >= 3)
         CL_XerpLog("xerpkick %u: step %d -> %.2f (frame %d)\n",
                    cls.realtime, xka.shots, xka_cur(), cl.frame.number);
+
+    // residue monitor: this frame's raw kick minus the mirrored climb is
+    // only contamination (damage/fall kicks, run_pitch, bob — measured
+    // within about [-3, +2.2] in the field). A breach means the mirror
+    // under-counted (a lost packet swallowed a flash) — log once per
+    // spray so real games reveal how often that actually happens
+    if (!xka.residue_flagged) {
+        float residue = cl.frame.ps.kick_angles[PITCH] - xka_cur();
+
+        if (residue < -3.2f || residue > 2.4f) {
+            xka.residue_flagged = true;
+            if (SCR_XerpDebugLevel() >= 2)
+                CL_XerpLog("xerpkick %u: RESIDUE %.2f at step %d "
+                           "(raw %.2f mirror %.2f) - desync?\n",
+                           cls.realtime, residue, xka.steps,
+                           cl.frame.ps.kick_angles[PITCH], xka_cur());
+        }
+    }
+
 }
 
 // once per received server frame, from CL_DeltaFrame — the flash for this
@@ -725,7 +778,7 @@ void CL_XerpKickFrame(void)
 #define XKA_KEY_NUM     cl.frame.number
 #endif
 
-float CL_XerpKickMirror(float lerp)
+static float xka_lerped(float lerp)
 {
     float from = xka_get(XKA_OLDKEY_NUM);
     float to = xka_get(XKA_KEY_NUM);
@@ -733,32 +786,173 @@ float CL_XerpKickMirror(float lerp)
     return from + (to - from) * lerp;
 }
 
+/*
+Phase B — the generator S: the SAME machine as A, driven by predicted
+shots instead of echoes, so the climb renders from the click instead of
+one round-trip later. Rendered pitch = server_kick − A + S:
+
+- spray start: server kick and A are both still zero, S walks the exact
+  quantized ladder from the click — classic first-kick onset, one
+  round-trip early;
+- steady spray: A cancels the server's arriving climb exactly (proven
+  at 100.0% in phase A), S provides the same staircase shifted earlier;
+- release: S lerps to 0 over one 100 ms piece from the release — the
+  classic release shape — while A keeps cancelling the server's copy
+  until it drops a round-trip later;
+- damage, fall, run_pitch and bob contamination live only in
+  server_kick and pass through untouched (A is subtracted
+  unconditionally — it mirrors only the climb, nothing else).
+
+Rates can never exceed classic by construction: every piece of S is a
+ladder step (0.5 or 0.75 deg) or a release lerped over 100 ms, and a
+step that would start before the previous piece finished is queued to
+its end instead of overlapping. Self-heal: S releases with the trigger,
+on leaving normal play, and after XKG_STALL ms without a predicted step
+(empty clip, echo watchdog pause, server rejection) — a wrong S costs a
+few phantom steps that release classic-shaped, the same bound as a
+phantom bang. Demos and cl_xerp_fire 0 render pure classic (delta 0)
+while the trace keeps logging for baselines.
+*/
+
+static float xkg_rung(int n)
+{
+    return n <= 0 ? 0.0f : xka_quantize(n * -0.7f);
+}
+
+static unsigned xkg_chain_end(void)
+{
+    return xkg.chain_start + (unsigned)(xkg.shots - xkg.base) * 100;
+}
+
+static float xkg_value(unsigned now)
+{
+    unsigned done;
+
+    if (xkg.rel_time && now < xkg.rel_time + 100)
+        return xkg.rel_from * (1.0f - (now - xkg.rel_time) * 0.01f);
+    if (!xkg.shots)
+        return 0.0f;                // released (or idle), nothing scheduled
+    if (now <= xkg.chain_start)
+        return xkg_rung(xkg.base);
+    done = xkg.base + (now - xkg.chain_start) / 100;
+    if ((int)done >= xkg.shots)
+        return xkg_rung(xkg.shots);
+    return xkg_rung(done) + (xkg_rung(done + 1) - xkg_rung(done)) *
+           (((now - xkg.chain_start) % 100) * 0.01f);
+}
+
+// a predicted M4 full-auto shot appends one ladder rung to the chain of
+// back-to-back 100 ms pieces — rendered slope can never exceed classic
+static void xkg_step(void)
+{
+    unsigned now = cls.realtime;
+
+    if (!xkg.shots) {
+        xkg.spray_start = now;
+        xkg.steps = 0;
+        xkg.base = 0;
+        // a fresh chain waits for a still-running release piece to finish
+        // playing out (the server's release lerp completes the same way)
+        xkg.chain_start = (xkg.rel_time && now < xkg.rel_time + 100) ?
+                          xkg.rel_time + 100 : now;
+    } else if (now >= xkg_chain_end()) {
+        // chain idle at its target: start a new chain from here
+        xkg.base = xkg.shots;
+        xkg.chain_start = now;
+    }
+    if (xkg.rel_time && now >= xkg.rel_time + 100)
+        xkg.rel_time = 0;           // expired; a live one keeps playing
+    if (xkg.shots < XKA_CAP)
+        xkg.shots++;
+    xkg.steps++;
+    xkg.last_step = now;
+    if (SCR_XerpDebugLevel() >= 3)
+        CL_XerpLog("xerpkick %u: gen step %d (base %d chain %u)\n",
+                   now, xkg.shots, xkg.base, xkg.chain_start);
+}
+
+static void xkg_release(const char *why)
+{
+    unsigned now = cls.realtime;
+    float v;
+
+    if (!xkg.shots)
+        return;
+    v = xkg_value(now);
+    if (SCR_XerpDebugLevel() >= 3)
+        CL_XerpLog("xerpkick %u: gen released - %d steps, %.2f deep (%s)\n",
+                   now, xkg.steps, v, why);
+    xkg.shots = 0;
+    xkg.base = 0;
+    if (v != 0.0f) {
+        xkg.rel_from = v;
+        xkg.rel_time = now;
+    } else {
+        xkg.rel_time = 0;
+    }
+}
+
+// per render frame from CL_SetupFirstPersonView: the delta to add to the
+// lerped kick pitch, plus the cl_xerp_debug 3 trace of every component.
+// kick == out on baselines (cl_xerp_fire 0) and demo playback.
+float CL_XerpKickDelta(float lerp, float kick_pitch)
+{
+    unsigned now = cls.realtime;
+    float A = xka_lerped(lerp);
+    float S;
+    float delta = 0.0f;
+
+    // predicted stream stalled (empty clip, watchdog, rejection): the
+    // server's next think clears its kick — mirror that on our timeline
+    if (xkg.shots && now - xkg.last_step > XKG_STALL) {
+        xkg_release("stall");
+        xkg.stalled = true;     // only a fresh click restarts the spray
+    }
+
+    // the generator's shot count has exactly one source of truth:
+    // echoed shots (the A mirror) plus in-flight M4 predictions (the
+    // pending ring). A new prediction raises the target instantly (the
+    // click-time onset), its echo later trades in-flight for echoed and
+    // leaves the target flat, and echoes of shots that were never
+    // predicted (raise hold, watchdog pause) raise it too — so S can
+    // never double-step one shot at any RTT, and catches up to reality
+    // with queued classic-rate pieces when predictions were withheld
+    if (cl_xerp_fire->integer && !cls.demo.playback && xf.prev_attack &&
+        !xf_mode.m4_burst && !xkg.stalled) {
+        int target = xka.shots;
+        unsigned i;
+
+        for (i = xf.tail; i != xf.head; i++)
+            if (xf_weapons[xf.pending[i % XF_PENDING_MAX].widx].mz_weapon
+                == MZ_ROCKET)
+                target++;
+        if (target > XKA_CAP)
+            target = XKA_CAP;
+        while (xkg.shots < target)
+            xkg_step();
+    }
+    S = xkg_value(now);
+
+    if (cl_xerp_fire->integer && !cls.demo.playback)
+        delta = S - A;
+
+    if (SCR_XerpDebugLevel() >= 3 &&
+        (xf.prev_attack ||
+         (xf.last_fire && now - xf.last_fire <= 300) ||
+         xka.shots || S != 0.0f ||
+         (xka.last_fire_time && now - xka.last_fire_time <= 500)))
+        CL_XerpLog("xerpview %u: kick %.3f ack %.3f gen %.3f out %.3f\n",
+                   now, kick_pitch, A, S, kick_pitch + delta);
+
+    return delta;
+}
+
 void CL_XerpFireClear(void)
 {
     memset(&xf, 0, sizeof(xf));
     xf.last_widx = -1;
     memset(&xka, 0, sizeof(xka));
-}
-
-// cl_xerp_debug 3: per-render-frame recoil trace while firing (and a short
-// tail after), for A/B comparison of spray smoothness with and without
-// prediction. Records only the recoil components — server kick pitch and
-// the passive mirror — so mouse movement never pollutes the trace. The
-// mirror-activity gate keeps the trace alive in demo playback and baseline
-// (cl_xerp_fire 0) runs, where no local attack state exists.
-void CL_XerpViewTrace(float server_kick_pitch, float mirror_pitch)
-{
-    if (SCR_XerpDebugLevel() < 3)
-        return;
-    if (!xf.prev_attack &&
-        (!xf.last_fire || cls.realtime - xf.last_fire > 300) &&
-        !xka.shots &&
-        (!xka.last_fire_time || cls.realtime - xka.last_fire_time > 500))
-        return;
-
-    CL_XerpLog("xerpview %u: kick %.3f ack %.3f res %.3f\n",
-               cls.realtime, server_kick_pitch, mirror_pitch,
-               server_kick_pitch - mirror_pitch);
+    memset(&xkg, 0, sizeof(xkg));
 }
 
 // TNG blocks all firing during the round-start countdown, signalled only
@@ -817,6 +1011,10 @@ void CL_XerpFireCheck(bool attack)
     bool edge;
 
     edge = attack && !xf.prev_attack;
+    if (!attack && xf.prev_attack)
+        xkg_release("trigger");     // recoil generator releases with the trigger
+    if (edge || !attack)
+        xkg.stalled = false;        // fresh click (or release) unparks it
     xf.prev_attack = attack;
     if (edge)
         xf.stream_echoes = 0;
@@ -831,6 +1029,7 @@ void CL_XerpFireCheck(bool attack)
     // or a held respawn click bangs the instant we spawn
     if (ps->pmove.pm_type != PM_NORMAL) {
         xf.was_normal = false;
+        xkg_release("left normal play");
         if (edge && XF_VERBOSE)
             XF_LOG("skip: not in normal play (pm_type %d)\n", ps->pmove.pm_type);
         return;                     // dead, spectating, frozen
@@ -996,6 +1195,9 @@ void CL_XerpFireCheck(bool attack)
         xf.last_fire = now;
         xf.follow_left = w->follow;
     }
+
+    // (the recoil generator steps at render time from echoed + in-flight
+    // counts — the pending push below is what raises its target)
     if (XF_VERBOSE)
         XF_LOG("predicted %s%s\n", w->name, edge ? "" : " (auto)");
 

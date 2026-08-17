@@ -1254,9 +1254,11 @@ static void CL_SetupFirstPersonView(void)
         lerp = CL_KEYLERPFRAC;
 
         LerpAngles(ops->kick_angles, ps->kick_angles, lerp, kickangles);
-        // recoil trace (debug 3): server kick vs the passive mirror —
-        // nothing from the mirror is rendered
-        CL_XerpViewTrace(kickangles[PITCH], CL_XerpKickMirror(lerp));
+        // predicted M4 recoil: cancel the server's arriving climb (A) and
+        // regenerate it from predicted shots (S) — classic-shaped, one
+        // round-trip earlier. Damage/fall kicks pass through untouched.
+        // Zero in demos and at cl_xerp_fire 0; debug 3 traces every term.
+        kickangles[PITCH] += CL_XerpKickDelta(lerp, kickangles[PITCH]);
         VectorAdd(cl.refdef.viewangles, kickangles, cl.refdef.viewangles);
     }
 
