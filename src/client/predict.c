@@ -472,6 +472,7 @@ static struct {
 // the echo watchdog remains the backstop if an estimate ever goes wrong.
 static struct {
     float       cycle;          // learned ms between shots, 0 = use prior
+    float       pending_short;  // candidate shorter cycle awaiting confirmation
     unsigned    last_echo;
     int         samples;
 } xf_cad[q_countof(xf_weapons)];
@@ -496,10 +497,21 @@ static void xf_learn_cadence(int widx, unsigned now)
         // slow-click gaps and lag bursts
         if (interval >= w->refire * 0.6f && interval <= w->refire * 1.6f) {
             old = xf_cad[widx].cycle ? xf_cad[widx].cycle : w->refire;
-            if (interval < old)
-                xf_cad[widx].cycle = old * 0.5f + interval * 0.5f;
-            else
+            if (interval < old - 5) {
+                // shorter cycles need TWO consecutive agreeing samples: a
+                // lagging server that batches snapshots produces fake-short
+                // intervals, and a single one must not yank the estimate
+                if (xf_cad[widx].pending_short &&
+                    fabsf(interval - xf_cad[widx].pending_short) < 25) {
+                    xf_cad[widx].cycle = old * 0.5f + interval * 0.5f;
+                    xf_cad[widx].pending_short = 0;
+                } else {
+                    xf_cad[widx].pending_short = interval;
+                }
+            } else {
                 xf_cad[widx].cycle = old * 0.95f + interval * 0.05f;
+                xf_cad[widx].pending_short = 0;
+            }
             xf_cad[widx].samples++;
             if (XF_VERBOSE && fabsf(xf_cad[widx].cycle - old) >= 5)
                 XF_LOG("%s cadence calibrated: %d -> %d ms (n=%d)\n",
@@ -684,22 +696,6 @@ void CL_XerpFireCheck(bool attack)
     if (!strcmp(w->name, "mk23") && xf_mode.mk23_semi)
         automatic = false;
 
-    if (xf.last_fire && now - xf.last_fire < xf_cycle(w)) {
-        // paired weapons (akimbo): the second bang rides 100 ms after
-        // the cycle start, inside the refire window
-        if (xf.follow_left > 0 && now - xf.last_fire >= 100 && attack) {
-            follow = true;
-        } else {
-            if (edge && XF_VERBOSE)
-                XF_LOG("skip: %s refire, %u ms of %d\n",
-                       w->name, now - xf.last_fire, xf_cycle(w));
-            return;
-        }
-    }
-    if (!follow && !edge && !automatic)
-        return;                     // semi-auto needs a fresh click
-
-    // 3 round burst: the server fires 3 per trigger pull, mirror that
     // echo-based mode detection: the server streaming past 3 echoes in one
     // held pull proves full auto, whatever the mirrored toggle thinks
     if (xf.stream_echoes >= 4) {
@@ -714,8 +710,27 @@ void CL_XerpFireCheck(bool attack)
         }
     }
 
-    if ((w->mz_weapon == MZ_MACHINEGUN && xf_mode.mp5_burst) ||
-        (w->mz_weapon == MZ_ROCKET && xf_mode.m4_burst)) {
+    bool in_burst = (w->mz_weapon == MZ_MACHINEGUN && xf_mode.mp5_burst) ||
+                    (w->mz_weapon == MZ_ROCKET && xf_mode.m4_burst);
+
+    // outside burst mode, the learned fire cycle paces streams; burst mode
+    // has its own deterministic pacing below and bypasses this gate
+    if (!in_burst && xf.last_fire && now - xf.last_fire < xf_cycle(w)) {
+        // paired weapons (akimbo): the second bang rides 100 ms after
+        // the cycle start, inside the refire window
+        if (xf.follow_left > 0 && now - xf.last_fire >= 100 && attack) {
+            follow = true;
+        } else {
+            if (edge && XF_VERBOSE)
+                XF_LOG("skip: %s refire, %u ms of %d\n",
+                       w->name, now - xf.last_fire, xf_cycle(w));
+            return;
+        }
+    }
+    if (!follow && !edge && !automatic)
+        return;                     // semi-auto needs a fresh click
+
+    if (in_burst) {
         // the server auto-repeats bursts while the trigger is held (ready
         // state + attack starts a new burst after recovery) — mirror that,
         // or held-through bursts play as late echoes and the rhythm mixes
@@ -742,6 +757,10 @@ void CL_XerpFireCheck(bool attack)
                 XF_LOG("skip: burst spent, release trigger\n");
             return;
         }
+        // deterministic pacing: burst shots ride the server's fixed 100 ms
+        // frames from the burst start, immune to cadence-learner noise
+        if (now < xf.burst_start + (unsigned)(3 - xf.burst_left) * 100)
+            return;
         xf.burst_left--;
     }
 
