@@ -886,8 +886,12 @@ effects only — bullets, hit detection, blood and damage remain fully
 server-authoritative, so this cannot create or remove a hit. Predicted
 weapons: MK23, akimbo pistols, MP5, M4, M3 shotgun, handcannon, and the
 SSG sniper rifle (except for 700 ms after a zoom change, mirroring the
-server's zoom-busy window). Knife and grenades keep the standard
-server-echo behavior, as do silenced shots. Known cosmetic
+server's zoom-busy window). The MP5/M4 fire-mode toggle (`weapon`
+command, full auto vs 3 round burst) is mirrored so burst mode predicts
+3 shots per trigger pull; as a backstop for any mode desync, auto
+streams pause whenever the oldest in-flight prediction goes 350 ms
+without its server echo, until the next fresh click. Knife and grenades
+keep the standard server-echo behavior, as do silenced shots. Known cosmetic
 limits: clicking during a reload or while bandaging may produce a local
 flash for a shot the server rejects; a silencer's first shot plays the
 regular fire sound locally. Inactive during demo playback and while
@@ -898,20 +902,19 @@ spectating. Default value is 0.
 -   1 — instant predicted fire feedback
 
 ### cl\_xerp\_zoom  
-Predicted sniper zoom. The scope normally appears a full round-trip
-after the zoom key, because the `weapon`/`lens` command travels to the
-server and the fov change travels back. When enabled, the client
-mirrors the zoom state machine (1x/2x/4x/6x, fov 90/45/20/10) and
-applies the fov locally the moment the command is sent, handing off to
-the server value when it arrives — or reverting after 1.5 seconds if
-the server refused the zoom (e.g. while bandaging). Purely visual: shot
-timing is still governed by the fire predictor's zoom-busy window and
-the server. With `cl_xerp_debug 2`, each prediction logs a `xerpzoom`
-line. Inactive during demo playback. Default value is 0.
-
--   0 — scope appears on server confirmation (standard)
-
--   1 — scope appears instantly
+Experimental, keep 0: field data invalidated the premise for zoom-in.
+The sniper's zoom-in delay is dominated by a deliberate ~600 ms
+server-side weapon settle (the `WEAPON_BUSY` window, shortened by
+`zoom_comp` for high ping), not by the network — measured confirm times
+were ~650–700 ms at 15 ms ping. Predicting the fov locally desyncs the
+view from the server-driven scope overlay, producing a two-stage
+"zoom-in then settle" effect. When enabled, the client mirrors the zoom
+state machine (1x/2x/4x/6x, fov 90/45/20/10) and applies the fov the
+moment the command is sent, handing off to the server value on arrival
+(reverting after 1.5 s if refused). `xerpzoom` telemetry logs each
+prediction's outcome. Retained for experimentation, e.g. for very high
+ping where the round-trip share is meaningful. Default value is 0
+(recommended).
 
 ### cl\_xerp\_ents  
 Client-side extrapolation of remote players, thrown grenades and

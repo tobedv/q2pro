@@ -440,12 +440,25 @@ static struct {
     unsigned    last_fire;
     unsigned    zoom_busy_until;    // sniper: mirrors the server's WEAPON_BUSY
                                     // window after a zoom change
+    int         burst_left;         // shots remaining in a 3RB trigger pull
     struct {
         unsigned    time;
         int         mz_weapon;
     } pending[XF_PENDING_MAX];
     unsigned    head, tail;     // pending ring, head > tail
 } xf;
+
+// the server's persistent MP5/M4 fire mode (full auto vs 3 round burst),
+// toggled by the "weapon" command while holding that gun; deliberately NOT
+// reset on level change since the server persists it per connection
+static struct {
+    bool    mp5_burst, m4_burst;
+} xf_mode;
+
+// echo watchdog: if the oldest in-flight prediction is this stale, stop
+// auto-stream predictions until the next fresh click — self-heals any
+// desync between the mirrored fire mode and the server's actual mode
+#define XF_ECHO_STALE   350
 
 // called when a zoom command ("weapon"/"lens") is forwarded while holding
 // the sniper: the server enters WEAPON_BUSY for up to 6 frames (600 ms,
@@ -468,6 +481,31 @@ void CL_XerpFireZoomChanged(void)
 void CL_XerpFireClear(void)
 {
     memset(&xf, 0, sizeof(xf));
+}
+
+// the "weapon" command while holding the MP5/M4 toggles the server's
+// persistent fire mode — mirror it so burst mode isn't over-predicted
+void CL_XerpFireModeToggle(void)
+{
+    const xf_weapon_t *w;
+
+    if (cls.state != ca_active || cls.demo.playback)
+        return;
+
+    w = xf_find_weapon(false);
+    if (!w)
+        return;
+    if (w->mz_weapon == MZ_MACHINEGUN) {
+        xf_mode.mp5_burst = !xf_mode.mp5_burst;
+        if (XF_VERBOSE)
+            XF_LOG("mp5 mode mirrored: %s\n",
+                   xf_mode.mp5_burst ? "3 round burst" : "full auto");
+    } else if (w->mz_weapon == MZ_ROCKET) {
+        xf_mode.m4_burst = !xf_mode.m4_burst;
+        if (XF_VERBOSE)
+            XF_LOG("m4 mode mirrored: %s\n",
+                   xf_mode.m4_burst ? "3 round burst" : "full auto");
+    }
 }
 
 // called from CL_FinalizeCmd once per client frame with the sampled state
@@ -533,6 +571,30 @@ void CL_XerpFireCheck(bool attack)
     }
     if (!edge && !w->automatic)
         return;                     // semi-auto needs a fresh click
+
+    // 3 round burst: the server fires 3 per trigger pull, mirror that
+    if ((w->mz_weapon == MZ_MACHINEGUN && xf_mode.mp5_burst) ||
+        (w->mz_weapon == MZ_ROCKET && xf_mode.m4_burst)) {
+        if (edge)
+            xf.burst_left = 3;
+        if (xf.burst_left <= 0) {
+            if (edge && XF_VERBOSE)
+                XF_LOG("skip: burst spent, release trigger\n");
+            return;
+        }
+        xf.burst_left--;
+    }
+
+    // echo watchdog: predictions are outstanding way past any sane
+    // round-trip — the server isn't firing (mode desync, lag spike),
+    // so stop streaming until the player clicks again
+    if (!edge && xf.tail != xf.head &&
+        now - xf.pending[xf.tail % XF_PENDING_MAX].time > XF_ECHO_STALE) {
+        if (XF_VERBOSE)
+            XF_LOG("skip: oldest echo %u ms overdue, pausing stream\n",
+                   now - xf.pending[xf.tail % XF_PENDING_MAX].time);
+        return;
+    }
 
     xf.last_fire = now;
     if (XF_VERBOSE)

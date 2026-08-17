@@ -353,6 +353,8 @@ bool CL_ForwardToServer(void)
         CL_XerpFireZoomChanged();
         CL_XerpZoomCommand(cmd, Cmd_Argv(1));
     }
+    if (!Q_stricmp(cmd, "weapon"))
+        CL_XerpFireModeToggle();
 
     CL_ClientCommand(Cmd_RawArgsFrom(0));
     return true;

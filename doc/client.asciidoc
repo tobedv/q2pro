@@ -518,11 +518,11 @@ cl_xerp_fire::
     Default value is 0.
 
 cl_xerp_zoom::
-    Predicted sniper zoom: the client mirrors the zoom state machine
-    and applies the fov locally the moment the weapon/lens command is
-    sent, handing off to the server value on arrival (reverting after
-    1.5 s if refused). Purely visual. cl_xerp_debug 2 logs "xerpzoom"
-    lines. Inactive during demo playback. Default value is 0.
+    Experimental, keep 0: zoom-in delay is dominated by a deliberate
+    ~600 ms server-side weapon settle, not the network, and predicting
+    the fov desyncs it from the server-driven scope overlay. Retained
+    for experimentation at very high ping. "xerpzoom" telemetry logs
+    outcomes. Default value is 0 (recommended).
 
 cl_xerp_ents::
     Client-side extrapolation of remote players, thrown grenades and
