@@ -575,10 +575,48 @@ use_xerp servers don't extrapolate on top of us (double xerp).
 
 cvar_t *cl_xerp_ents;
 
+// per-entity record of the position we projected for the next snapshot,
+// so its error against the real position is measurable when it arrives
+static struct {
+    vec3_t      pred;
+    int         frame;          // cl.frame.number the projection was made on
+} xe_hist[MAX_EDICTS];
+
+// cl_xerp_debug 2: rolling validation stats, one "xerpents" line per window
+static struct {
+    unsigned    start;
+    int         extrapolated;   // entity-frames drawn extrapolated
+    int         slow, jump;     // entity-frames that fell back to interp
+    int         checks;         // predictions checked against a real snapshot
+    float       err_sum, err_max;
+} xe_stats;
+
+static void xe_report(void)
+{
+    if (SCR_XerpDebugLevel() < 2)
+        return;
+    if (!xe_stats.start) {
+        xe_stats.start = cls.realtime;
+        return;
+    }
+    if (cls.realtime - xe_stats.start < 5000)
+        return;
+
+    Com_Printf("xerpents %u: extrapolated %d, fell back %d slow %d jump, "
+               "pred err avg %.1f max %.1f units (%d checks)\n",
+               cls.realtime, xe_stats.extrapolated,
+               xe_stats.slow, xe_stats.jump,
+               xe_stats.checks ? xe_stats.err_sum / xe_stats.checks : 0,
+               xe_stats.err_max, xe_stats.checks);
+
+    memset(&xe_stats, 0, sizeof(xe_stats));
+    xe_stats.start = cls.realtime;
+}
+
 bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
 {
     vec3_t vel, pred;
-    float speed;
+    float speed, err;
 
     if (!cl_xerp_ents->integer || cls.demo.playback)
         return false;
@@ -587,17 +625,47 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     if (s1->event == EV_PLAYER_TELEPORT)
         return false;
 
+    xe_report();
+
     // per-server-frame displacement between the two newest snapshots;
     // a fresh entity has prev == current, giving zero and falling through
     VectorSubtract(cent->current.origin, cent->prev.origin, vel);
     speed = VectorLength(vel) * (1000.0f / CL_FRAMETIME);
 
-    if (speed < 120)
+    // grade the previous projection against where the player really went
+    // (once per entity per snapshot: the store below ends the comparison)
+    if (xe_hist[s1->number].frame &&
+        cl.frame.number == xe_hist[s1->number].frame + 1) {
+        err = Distance(xe_hist[s1->number].pred, cent->current.origin);
+        xe_stats.err_sum += err;
+        if (err > xe_stats.err_max)
+            xe_stats.err_max = err;
+        xe_stats.checks++;
+    }
+
+    if (speed < 120) {
+        xe_stats.slow++;
+        xe_hist[s1->number].frame = 0;
         return false;               // low-speed wiggle: don't guess
-    if (speed > 2000)
+    }
+    if (speed > 2000) {
+        xe_stats.jump++;
+        xe_hist[s1->number].frame = 0;
         return false;               // teleport/respawn-sized jump: snap
+    }
 
     VectorAdd(cent->current.origin, vel, pred);
+
+    VectorCopy(pred, xe_hist[s1->number].pred);
+    xe_hist[s1->number].frame = cl.frame.number;
+
     LerpVector(cent->current.origin, pred, cl.lerpfrac, org);
+    xe_stats.extrapolated++;
     return true;
+}
+
+void CL_XerpEntsClear(void)
+{
+    memset(xe_hist, 0, sizeof(xe_hist));
+    memset(&xe_stats, 0, sizeof(xe_stats));
 }

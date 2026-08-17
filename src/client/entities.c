@@ -293,6 +293,7 @@ static void set_active_state(void)
     SCR_LagClear();
     SCR_XerpDebugClear();
     CL_XerpFireClear();
+    CL_XerpEntsClear();
     Con_Close(false);           // get rid of connection screen
 
     CL_CheckForPause();

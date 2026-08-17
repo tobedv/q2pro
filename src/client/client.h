@@ -878,6 +878,7 @@ void CL_XerpFireZoomChanged(void);
 void CL_XerpBufferSnapshot(void);
 bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org);
 void CL_XerpEntsChanged(cvar_t *self);
+void CL_XerpEntsClear(void);
 void CL_Trace(trace_t *tr, const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs, int contentmask);
 
 

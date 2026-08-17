@@ -84,6 +84,7 @@
     - [scr\_lag\_max](#scr_lag_max)
     - [cl\_xerp\_debug](#cl_xerp_debug)
     - [cl\_xerp\_fire](#cl_xerp_fire)
+    - [cl\_xerp\_ents](#cl_xerp_ents)
     - [cl\_xerp\_buffer](#cl_xerp_buffer)
     - [scr\_chathud](#scr_chathud)
     - [scr\_chathud\_lines](#scr_chathud_lines)
@@ -894,6 +895,28 @@ spectating. Default value is 0.
 -   0 — standard behavior (fire feedback after server round-trip)
 
 -   1 — instant predicted fire feedback
+
+### cl\_xerp\_ents  
+Client-side extrapolation of remote players. Instead of interpolating
+between the two most recent server snapshots (rendering up to a full
+server frame in the past), the interpolation window is shifted one
+frame forward: players render between the newest snapshot and its
+velocity projection — the same visual effect server-side xerp
+(`use_xerp`) produces, computed locally so it works on every server.
+Purely visual; hit detection is unchanged. Safeguards: extrapolation is
+skipped below 120 ups (so strafe-wiggle isn't amplified), above 2000
+ups (teleport/respawn-sized jumps snap), and on teleport events. While
+enabled the client reports `cl_xerp 0` to the server so `use_xerp`
+servers don't extrapolate on top (the archived cvar is not modified).
+With `cl_xerp_debug 2`, a `xerpents` line is logged every 5 seconds:
+how many entity-frames were extrapolated vs fell back, and the
+prediction error (average/max distance in units between the projected
+and actual position, graded when each new snapshot arrives). Inactive
+during demo playback. Default value is 0.
+
+-   0 — standard interpolation
+
+-   1 — extrapolate remote players one frame forward
 
 ### cl\_xerp\_buffer  
 Adaptive interpolation buffer. The client normally renders a

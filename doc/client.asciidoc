@@ -517,6 +517,17 @@ cl_xerp_fire::
     "logfile 2"). Inactive during demo playback and spectating.
     Default value is 0.
 
+cl_xerp_ents::
+    Client-side extrapolation of remote players: shifts the
+    interpolation window one server frame forward (newest snapshot to
+    its velocity projection), the same visual effect server-side xerp
+    produces, computed locally. Purely visual. Skipped below 120 ups,
+    above 2000 ups, and on teleport events. While enabled the client
+    reports cl_xerp 0 via CvarSync so use_xerp servers don't double
+    extrapolate. cl_xerp_debug 2 logs a "xerpents" validation line
+    (extrapolated/fallback counts, prediction error avg/max) every 5
+    seconds. Inactive during demo playback. Default value is 0.
+
 cl_xerp_buffer::
     Adaptive interpolation buffer: slews client time toward riding
     [value + 3x measured snapshot jitter] ms behind the newest snapshot
