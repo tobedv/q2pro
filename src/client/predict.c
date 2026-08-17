@@ -583,11 +583,16 @@ server.
 */
 float CL_XerpFireKickPitch(void)
 {
-    unsigned i;
+    static float    cur;
+    static unsigned last;
+    unsigned i, now;
+    float target, frac;
     int in_flight = 0;
 
-    if (!cl_xerp_fire->integer || xf_mode.m4_burst)
+    if (!cl_xerp_fire->integer || xf_mode.m4_burst) {
+        cur = 0;
         return 0;
+    }
 
     for (i = xf.tail; i != xf.head; i++)
         if (xf_weapons[xf.pending[i % XF_PENDING_MAX].widx].mz_weapon ==
@@ -596,7 +601,23 @@ float CL_XerpFireKickPitch(void)
 
     if (in_flight > 4)
         in_flight = 4;              // bound the predicted share
-    return in_flight * -1.5f;
+    target = in_flight * -1.5f;
+
+    // the in-flight count is discrete (steps on every prediction and every
+    // echo), and raw steps on top of the server's smoothly lerped climb
+    // read as a 10 Hz up/down chop — low-pass toward the target instead
+    // (~80 ms time constant, still far ahead of the round-trip)
+    now = cls.realtime;
+    if (!last || now - last > 250) {
+        cur = target;
+    } else {
+        frac = (now - last) * (1.0f / 80);
+        if (frac > 1)
+            frac = 1;
+        cur += (target - cur) * frac;
+    }
+    last = now;
+    return cur;
 }
 
 // TNG blocks all firing during the round-start countdown, signalled only
