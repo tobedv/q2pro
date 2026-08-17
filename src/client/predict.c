@@ -448,6 +448,12 @@ static struct {
     int         burst_left;         // shots remaining in a 3RB trigger pull
     unsigned    burst_start;        // when the current burst began
     int         follow_left;        // paired shots left in this fire cycle
+    unsigned    raise_until;        // weapon raise after respawn/switch:
+                                    // the server can't fire during it
+    int         stream_echoes;      // echoes consumed since the last edge,
+                                    // for burst-mode detection
+    bool        was_normal;         // previous frame's pm_type was NORMAL
+    int         last_widx;          // weapon held last frame, -1 = none
     struct {
         unsigned    time;
         int         mz_weapon;
@@ -537,6 +543,7 @@ void CL_XerpFireZoomChanged(void)
 void CL_XerpFireClear(void)
 {
     memset(&xf, 0, sizeof(xf));
+    xf.last_widx = -1;
 }
 
 // the "weapon" command while holding the MP5/M4 toggles the server's
@@ -579,16 +586,32 @@ void CL_XerpFireCheck(bool attack)
 
     edge = attack && !xf.prev_attack;
     xf.prev_attack = attack;
+    if (edge)
+        xf.stream_echoes = 0;
 
-    if (!cl_xerp_fire->integer || !attack)
+    if (!cl_xerp_fire->integer)
         return;
     if (cls.state != ca_active || cls.demo.playback)
         return;
+
+    // respawn detection: the server plays the weapon raise animation
+    // (~1 s of activate frames) before it can fire — hold predictions,
+    // or a held respawn click bangs the instant we spawn
     if (ps->pmove.pm_type != PM_NORMAL) {
+        xf.was_normal = false;
         if (edge && XF_VERBOSE)
             XF_LOG("skip: not in normal play (pm_type %d)\n", ps->pmove.pm_type);
         return;                     // dead, spectating, frozen
     }
+    if (!xf.was_normal) {
+        xf.was_normal = true;
+        xf.raise_until = cls.realtime + 1000;
+        if (XF_VERBOSE)
+            XF_LOG("spawned - holding fire for the weapon raise\n");
+    }
+
+    if (!attack)
+        return;
     if (xf_bandaging()) {
         if (edge && XF_VERBOSE)
             XF_LOG("skip: bandaging\n");
@@ -615,6 +638,18 @@ void CL_XerpFireCheck(bool attack)
         return;
 
     now = cls.realtime;
+
+    // switching weapons also plays a raise animation server-side
+    if (xf.last_widx != (int)(w - xf_weapons)) {
+        xf.last_widx = (int)(w - xf_weapons);
+        if (xf.raise_until < now + 900)
+            xf.raise_until = now + 900;
+    }
+    if (now < xf.raise_until) {
+        if (edge && XF_VERBOSE)
+            XF_LOG("skip: weapon raising, %u ms left\n", xf.raise_until - now);
+        return;
+    }
     if (w->mz_weapon == MZ_HYPERBLASTER &&
         xf.zoom_busy_until && now < xf.zoom_busy_until) {
         if (edge && XF_VERBOSE)
@@ -647,6 +682,20 @@ void CL_XerpFireCheck(bool attack)
         return;                     // semi-auto needs a fresh click
 
     // 3 round burst: the server fires 3 per trigger pull, mirror that
+    // echo-based mode detection: the server streaming past 3 echoes in one
+    // held pull proves full auto, whatever the mirrored toggle thinks
+    if (xf.stream_echoes >= 4) {
+        if (w->mz_weapon == MZ_MACHINEGUN && xf_mode.mp5_burst) {
+            xf_mode.mp5_burst = false;
+            if (XF_VERBOSE)
+                XF_LOG("mp5 full auto detected from echo stream\n");
+        } else if (w->mz_weapon == MZ_ROCKET && xf_mode.m4_burst) {
+            xf_mode.m4_burst = false;
+            if (XF_VERBOSE)
+                XF_LOG("m4 full auto detected from echo stream\n");
+        }
+    }
+
     if ((w->mz_weapon == MZ_MACHINEGUN && xf_mode.mp5_burst) ||
         (w->mz_weapon == MZ_ROCKET && xf_mode.m4_burst)) {
         if (edge) {
@@ -674,6 +723,19 @@ void CL_XerpFireCheck(bool attack)
     // so stop streaming until the player clicks again
     if (!edge && xf.tail != xf.head &&
         now - xf.pending[xf.tail % XF_PENDING_MAX].time > XF_ECHO_STALE) {
+        // the server stopped at exactly 3 echoes mid-pull: that IS burst
+        // mode — adopt it even if the toggle mirror missed it
+        if (xf.stream_echoes == 3) {
+            if (w->mz_weapon == MZ_MACHINEGUN && !xf_mode.mp5_burst) {
+                xf_mode.mp5_burst = true;
+                if (XF_VERBOSE)
+                    XF_LOG("mp5 3 round burst detected from echo stream\n");
+            } else if (w->mz_weapon == MZ_ROCKET && !xf_mode.m4_burst) {
+                xf_mode.m4_burst = true;
+                if (XF_VERBOSE)
+                    XF_LOG("m4 3 round burst detected from echo stream\n");
+            }
+        }
         if (XF_VERBOSE)
             XF_LOG("skip: oldest echo %u ms overdue, pausing stream\n",
                    now - xf.pending[xf.tail % XF_PENDING_MAX].time);
@@ -732,8 +794,9 @@ bool CL_XerpFireSuppress(void)
             if (XF_VERBOSE)
                 XF_LOG("echo consumed, click-to-echo %u ms (mz %d)\n",
                        now - xf.pending[i % XF_PENDING_MAX].time, mz.weapon);
-            // the echo stream reveals the server's true fire cycle
+            // the echo stream reveals the server's true fire cycle and mode
             xf_learn_cadence(xf.pending[i % XF_PENDING_MAX].widx, now);
+            xf.stream_echoes++;
             // consume this and anything older
             xf.tail = i + 1;
             return true;
