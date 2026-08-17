@@ -761,7 +761,8 @@ static void SCR_DrawXerpDebug(void)
     client_history_t *h;
     int x, y, ping;
 
-    if (!cl_xerp_debug->integer)
+    // 1-3 draw the overlay; 4 = telemetry logging without the panel
+    if (cl_xerp_debug->integer < 1 || cl_xerp_debug->integer > 3)
         return;
     if (cls.demo.playback)
         return;

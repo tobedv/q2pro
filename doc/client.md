@@ -870,6 +870,9 @@ playback. Default value is 0.
 
 -   1 — overlay visible
 
+-   4 — telemetry logging as per 2, but with the overlay hidden — for
+    normal play with data collection
+
 -   2 — overlay visible, plus a `xerpbuf` timing summary logged to the
     console every 5 seconds: render-delay average/min/max over the
     window, the adaptive buffer's current target, high/low clamp counts,

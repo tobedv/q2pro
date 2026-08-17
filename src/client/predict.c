@@ -726,7 +726,7 @@ void CL_XerpKickEcho(void)
     xka.last_fire_frame = cl.frame.number;
     xka.last_fire_time = cls.realtime;
     xka_set(cl.frame.number, xka_cur());
-    if (SCR_XerpDebugLevel() >= 3)
+    if (SCR_XerpDebugLevel() == 3)
         CL_XerpLog("xerpkick %u: step %d -> %.2f (frame %d)\n",
                    cls.realtime, xka.shots, xka_cur(), cl.frame.number);
 
@@ -866,7 +866,7 @@ static void xkg_step(void)
         xkg.shots++;
     xkg.steps++;
     xkg.last_step = now;
-    if (SCR_XerpDebugLevel() >= 3)
+    if (SCR_XerpDebugLevel() == 3)
         CL_XerpLog("xerpkick %u: gen step %d (base %d chain %u)\n",
                    now, xkg.shots, xkg.base, xkg.chain_start);
 }
@@ -879,7 +879,7 @@ static void xkg_release(const char *why)
     if (!xkg.shots)
         return;
     v = xkg_value(now);
-    if (SCR_XerpDebugLevel() >= 3)
+    if (SCR_XerpDebugLevel() == 3)
         CL_XerpLog("xerpkick %u: gen released - %d steps, %.2f deep (%s)\n",
                    now, xkg.steps, v, why);
     xkg.shots = 0;
@@ -936,7 +936,7 @@ float CL_XerpKickDelta(float lerp, float kick_pitch)
     if (cl_xerp_fire->integer && !cls.demo.playback)
         delta = S - A;
 
-    if (SCR_XerpDebugLevel() >= 3 &&
+    if (SCR_XerpDebugLevel() == 3 &&
         (xf.prev_attack ||
          (xf.last_fire && now - xf.last_fire <= 300) ||
          xka.shots || S != 0.0f ||
