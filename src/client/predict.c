@@ -532,8 +532,19 @@ static struct {
 
 // echo watchdog: if the oldest in-flight prediction is this stale, stop
 // auto-stream predictions until the next fresh click — self-heals any
-// desync between the mirrored fire mode and the server's actual mode
-#define XF_ECHO_STALE   350
+// desync between the mirrored fire mode and the server's actual mode.
+// The threshold adapts to measured echo latency so high-ping players
+// (echoes at 200+ ms) don't get their streams falsely paused.
+#define XF_ECHO_STALE_MIN   350
+
+static float xf_echo_latency;   // EWMA of measured click-to-echo ms
+
+static unsigned xf_echo_stale(void)
+{
+    unsigned t = (unsigned)(xf_echo_latency * 2.0f) + 150;
+
+    return t > XF_ECHO_STALE_MIN ? t : XF_ECHO_STALE_MIN;
+}
 
 // called when a zoom command ("weapon"/"lens") is forwarded while holding
 // the sniper: the server enters WEAPON_BUSY for up to 6 frames (600 ms,
@@ -557,6 +568,35 @@ void CL_XerpFireClear(void)
 {
     memset(&xf, 0, sizeof(xf));
     xf.last_widx = -1;
+}
+
+/*
+Predicted spray punch: the M4's recoil climb (kick_angles pitch of -1.5
+degrees per full-auto shot, and the bullets follow the climbed angle) is
+part of the server player state, so under fire prediction the bangs lead
+the visual climb by a round-trip — spray compensation timing feels
+desynced. The client applies the climb for exactly the in-flight
+predicted shots (predicted but not yet echoed); as each echo arrives the
+server's own kick takes over that shot's share, so the handoff is
+continuous and never double-counts. No climb in burst mode, matching the
+server.
+*/
+float CL_XerpFireKickPitch(void)
+{
+    unsigned i;
+    int in_flight = 0;
+
+    if (!cl_xerp_fire->integer || xf_mode.m4_burst)
+        return 0;
+
+    for (i = xf.tail; i != xf.head; i++)
+        if (xf_weapons[xf.pending[i % XF_PENDING_MAX].widx].mz_weapon ==
+            MZ_ROCKET)
+            in_flight++;
+
+    if (in_flight > 4)
+        in_flight = 4;              // bound the predicted share
+    return in_flight * -1.5f;
 }
 
 // TNG blocks all firing during the round-start countdown, signalled only
@@ -768,7 +808,7 @@ void CL_XerpFireCheck(bool attack)
     // round-trip — the server isn't firing (mode desync, lag spike),
     // so stop streaming until the player clicks again
     if (!edge && xf.tail != xf.head &&
-        now - xf.pending[xf.tail % XF_PENDING_MAX].time > XF_ECHO_STALE) {
+        now - xf.pending[xf.tail % XF_PENDING_MAX].time > xf_echo_stale()) {
         // the server stopped at exactly 3 echoes mid-pull: that IS burst
         // mode — adopt it even if the toggle mirror missed it
         if (xf.stream_echoes == 3) {
@@ -849,6 +889,11 @@ bool CL_XerpFireSuppress(void)
             if (XF_VERBOSE)
                 XF_LOG("echo consumed, click-to-echo %u ms (mz %d)\n",
                        now - xf.pending[i % XF_PENDING_MAX].time, mz.weapon);
+            // feed the adaptive watchdog threshold
+            xf_echo_latency = xf_echo_latency
+                ? xf_echo_latency * 0.9f +
+                  (now - xf.pending[i % XF_PENDING_MAX].time) * 0.1f
+                : (float)(now - xf.pending[i % XF_PENDING_MAX].time);
             // the echo stream reveals the server's true fire cycle and mode
             xf_learn_cadence(xf.pending[i % XF_PENDING_MAX].widx, now);
             xf.stream_echoes++;
