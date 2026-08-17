@@ -697,6 +697,106 @@ void SCR_LagSample(void)
     lag.head++;
 }
 
+// cl_xerp_debug: netcode feel instrumentation (interp delay, snapshot jitter)
+static cvar_t   *cl_xerp_debug;
+
+static struct {
+    unsigned    last_rcvd;      // cls.realtime when previous snapshot arrived
+    int         last_delta;     // ms between the two most recent snapshots
+    float       jitter;         // EWMA of |delta - expected frame interval|
+    int         max_delta;      // worst snapshot gap since level start
+    int         stalls;         // snapshots that arrived > 1.5x expected interval late
+    int         samples;
+} xerpdbg;
+
+void SCR_XerpDebugClear(void)
+{
+    memset(&xerpdbg, 0, sizeof(xerpdbg));
+}
+
+// smoothed snapshot jitter in ms, for the adaptive interpolation buffer
+float SCR_XerpJitter(void)
+{
+    return xerpdbg.jitter;
+}
+
+// 0 = off, 1 = overlay, 2 = overlay + timing stats logged to console
+int SCR_XerpDebugLevel(void)
+{
+    return cl_xerp_debug ? cl_xerp_debug->integer : 0;
+}
+
+static void cl_xerp_debug_changed(cvar_t *self)
+{
+    SCR_XerpDebugClear();
+}
+
+void SCR_XerpDebugSample(void)
+{
+    unsigned now = cls.realtime;
+
+    if (xerpdbg.last_rcvd) {
+        int delta = now - xerpdbg.last_rcvd;
+        float err = fabsf((float)(delta - CL_FRAMETIME));
+
+        xerpdbg.last_delta = delta;
+        if (xerpdbg.samples < 2) {
+            xerpdbg.jitter = err;
+        } else {
+            xerpdbg.jitter = xerpdbg.jitter * 0.9f + err * 0.1f;
+            // skip the peaks until timing settles after level start
+            if (delta > xerpdbg.max_delta)
+                xerpdbg.max_delta = delta;
+            if (delta * 2 > CL_FRAMETIME * 3)
+                xerpdbg.stalls++;
+        }
+        xerpdbg.samples++;
+    }
+    xerpdbg.last_rcvd = now;
+}
+
+static void SCR_DrawXerpDebug(void)
+{
+    char buffer[MAX_QPATH];
+    client_history_t *h;
+    int x, y, ping;
+
+    if (!cl_xerp_debug->integer)
+        return;
+    if (cls.demo.playback)
+        return;
+
+    h = &cl.history[cls.netchan.incoming_acknowledged & CMD_MASK];
+    ping = (h->cmdNumber && h->rcvd > h->sent) ? h->rcvd - h->sent : 0;
+
+    x = scr.hud_width - CONCHAR_WIDTH;
+    y = scr.hud_height / 3;
+
+    Q_snprintf(buffer, sizeof(buffer), "ping    %4d ms", ping);
+    SCR_DrawString(x, y, UI_RIGHT, buffer);
+    y += CONCHAR_HEIGHT;
+
+    Q_snprintf(buffer, sizeof(buffer), "interp  %4d ms (lerp %.2f)",
+               cl.servertime - cl.time, cl.lerpfrac);
+    SCR_DrawString(x, y, UI_RIGHT, buffer);
+    y += CONCHAR_HEIGHT;
+
+    Q_snprintf(buffer, sizeof(buffer), "snap dt %4d ms", xerpdbg.last_delta);
+    SCR_DrawString(x, y, UI_RIGHT, buffer);
+    y += CONCHAR_HEIGHT;
+
+    Q_snprintf(buffer, sizeof(buffer), "jitter  %4.1f ms", xerpdbg.jitter);
+    SCR_DrawString(x, y, UI_RIGHT, buffer);
+    y += CONCHAR_HEIGHT;
+
+    Q_snprintf(buffer, sizeof(buffer), "worst   %4d ms", xerpdbg.max_delta);
+    SCR_DrawString(x, y, UI_RIGHT, buffer);
+    y += CONCHAR_HEIGHT;
+
+    Q_snprintf(buffer, sizeof(buffer), "stalls  %4d", xerpdbg.stalls);
+    SCR_DrawString(x, y, UI_RIGHT, buffer);
+}
+
 static void SCR_LagDraw(int x, int y)
 {
     int i, j, v, c, v_min, v_max, v_range;
@@ -1556,6 +1656,8 @@ void SCR_Init(void)
     scr_lag_draw = Cvar_Get("scr_lag_draw", "0", 0);
     scr_lag_min = Cvar_Get("scr_lag_min", "0", 0);
     scr_lag_max = Cvar_Get("scr_lag_max", "200", 0);
+    cl_xerp_debug = Cvar_Get("cl_xerp_debug", "0", 0);
+    cl_xerp_debug->changed = cl_xerp_debug_changed;
     scr_alpha = Cvar_Get("scr_alpha", "1", 0);
 
 #if USE_DEBUG
@@ -2807,6 +2909,8 @@ static void SCR_Draw2D(void)
     SCR_DrawCenterString();
 
     SCR_DrawNet();
+
+    SCR_DrawXerpDebug();
 
     SCR_DrawObjects();
 

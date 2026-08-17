@@ -759,6 +759,8 @@ void CL_FinalizeCmd(void)
     if (in_use.state & 3)
         cl.cmd.buttons |= BUTTON_USE;
 
+    CL_XerpFireCheck(cl.cmd.buttons & BUTTON_ATTACK);
+
     if (cls.key_dest == KEY_GAME && Key_AnyKeyDown()) {
         cl.cmd.buttons |= BUTTON_ANY;
     }

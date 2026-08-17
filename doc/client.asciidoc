@@ -493,6 +493,39 @@ scr_lag_max::
     Specifies ping graph scale by defining the maximum value that can be
     displayed. Default value is 200.
 
+cl_xerp_debug::
+    Toggles the netcode instrumentation overlay, drawn at the right edge
+    of the screen: current ping, interpolation delay and lerp fraction,
+    interval between the two most recent server snapshots, smoothed
+    snapshot jitter, the worst snapshot gap observed, and a count of
+    stalls (snapshots later than 1.5x the expected interval). Peaks
+    reset on level change or by toggling the cvar. Value 2 additionally
+    logs a "xerpbuf" timing summary to the console every 5 seconds
+    (render-delay distribution, clamp counts, starvation events) for
+    validating cl_xerp_buffer settings. Purely diagnostic; hidden
+    during demo playback. Default value is 0.
+
+cl_xerp_fire::
+    Predicted local weapon fire feedback: your own muzzle flash and fire
+    sound play the instant the attack input is sampled instead of after
+    the server round-trip; the echoed server muzzle flash is consumed so
+    nothing plays twice. Fire effects only — hit detection and damage
+    remain fully server-authoritative. Predicts MK23, akimbo, MP5, M4,
+    M3, handcannon and the SSG (except for 700 ms after a zoom change);
+    knife, grenades and silenced shots keep standard behavior. Value 2 additionally logs every fire decision and
+    per-shot click-to-echo latency to the console (persist with
+    "logfile 2"). Inactive during demo playback and spectating.
+    Default value is 0.
+
+cl_xerp_buffer::
+    Adaptive interpolation buffer: slews client time toward riding
+    [value + 3x measured snapshot jitter] ms behind the newest snapshot
+    instead of the connect-timing-random 0-100 ms, giving a fresher view
+    and faster kill feedback. Slew is capped at 2 ms per render frame;
+    starvation raises the margin for a few seconds. Watch "interp" in
+    the cl_xerp_debug overlay while tuning. Inactive during demo
+    playback. Default value is 0 (disabled).
+
 scr_chathud::
     Toggles drawing of the last chat lines on the screen. Default value is 0.
       - 0 — do not draw chat lines

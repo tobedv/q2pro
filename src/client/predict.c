@@ -306,3 +306,252 @@ void CL_PredictMovement(void)
     VectorScale(pm.s.velocity, 0.125f, cl.predicted_velocity);
     VectorCopy(pm.viewangles, cl.predicted_angles);
 }
+
+/*
+==============================================================================
+XERP FIRE — predicted local weapon fire feedback (cl_xerp_fire, Phase 1 of
+the cl_xerp_* netcode feel features).
+
+When the attack input is sampled and the mirrored weapon state says the shot
+will happen, the muzzle flash and fire sound play immediately instead of
+after the server round-trip. The echoed svc_muzzleflash is then consumed so
+nothing plays twice. Fire effects only: bullets, hits, blood and damage
+remain fully server-authoritative — this cannot create or remove a hit.
+==============================================================================
+*/
+
+cvar_t *cl_xerp_fire;
+
+// cl_xerp_fire 2: log every fire decision to the console (persist with
+// "logfile 2", which writes the console to logs/console.log)
+#define XF_VERBOSE  (cl_xerp_fire->integer >= 2)
+
+#define XF_LOG(...) \
+    Com_Printf("xerpfire %u: " , cls.realtime), Com_Printf(__VA_ARGS__)
+
+typedef struct {
+    const char  *wwep;      // world weapon (vwep) model substring, from the
+                            // player entity's skinnum — present for every
+                            // player regardless of hand/cl_gun settings
+    const char  *vwep;      // view weapon model substring, from ps.gunindex —
+                            // fallback, absent for center-handed players
+    const char  *name;      // for cl_xerp_fire 2 logging
+    int         mz_weapon;  // MZ_* code the server echoes for this weapon
+    unsigned    refire;     // minimum ms between predicted shots
+    bool        automatic;  // keeps firing while attack is held
+} xf_weapon_t;
+
+static const xf_weapon_t xf_weapons[] = {
+    { "w_mk23",    "v_blast",  "mk23",   MZ_BLASTER,      300, true  },
+    { "w_mp5",     "v_machn",  "mp5",    MZ_MACHINEGUN,   100, true  },
+    { "w_m4",      "v_m4",     "m4",     MZ_ROCKET,       100, true  },
+    { "w_super90", "v_shotg",  "m3",     MZ_SHOTGUN,     1000, false },
+    { "w_cannon",  "v_cannon", "hc",     MZ_SSHOTGUN,    1500, false },
+    { "w_akimbo",  "v_dual",   "akimbo", MZ_BLASTER,      160, true  },
+    { "w_sniper",  "v_sniper", "ssg",    MZ_HYPERBLASTER, 1300, false },
+    // absent on purpose: knife, grenade — those keep today's server-echo
+    // behavior. The sniper is predicted except during its zoom-busy window
+    // (see CL_XerpFireZoomChanged).
+};
+
+// identify the held weapon: primary source is the own player entity's vwep
+// index (skinnum high bits), which is always present; ps.gunindex is only a
+// fallback since center-handed players (hand 2) get gunindex 0
+static const xf_weapon_t *xf_find_weapon(bool log)
+{
+    centity_t *self = &cl_entities[cl.frame.clientNum + 1];
+    const char *model = NULL;
+    int i;
+
+    if (self->serverframe == cl.frame.number &&
+        self->current.modelindex2 == MODELINDEX_PLAYER) {
+        i = self->current.skinnum >> 8;
+        if (cl.csr.extended)
+            i &= 0xff;
+        if (i >= 0 && i < cl.numWeaponModels)
+            model = cl.weaponModels[i];
+        for (i = 0; model && i < q_countof(xf_weapons); i++)
+            if (strstr(model, xf_weapons[i].wwep))
+                return &xf_weapons[i];
+    }
+
+    i = cl.frame.ps.gunindex & GUNINDEX_MASK;
+    if (i) {
+        model = cl.configstrings[cl.csr.models + i];
+        for (i = 0; i < q_countof(xf_weapons); i++)
+            if (strstr(model, xf_weapons[i].vwep))
+                return &xf_weapons[i];
+    }
+
+    if (log && XF_VERBOSE)
+        XF_LOG("skip: weapon not predicted (%s)\n", model ? model : "unknown");
+    return NULL;
+}
+
+// TNG puts the health icon in STAT_HELPICON only while bandaging
+static bool xf_bandaging(void)
+{
+    int icon = cl.frame.ps.stats[STAT_HELPICON];
+
+    return icon > 0 && icon < cl.csr.max_images &&
+        !strcmp(cl.configstrings[cl.csr.images + icon], "i_health");
+}
+
+#define XF_PENDING_MAX  8
+#define XF_ECHO_WINDOW  600     // ms a predicted shot waits for its echo
+
+static struct {
+    bool        prev_attack;
+    unsigned    last_fire;
+    unsigned    zoom_busy_until;    // sniper: mirrors the server's WEAPON_BUSY
+                                    // window after a zoom change
+    struct {
+        unsigned    time;
+        int         mz_weapon;
+    } pending[XF_PENDING_MAX];
+    unsigned    head, tail;     // pending ring, head > tail
+} xf;
+
+// called when a zoom command ("weapon"/"lens") is forwarded while holding
+// the sniper: the server enters WEAPON_BUSY for up to 6 frames (600 ms,
+// zoom_comp only ever shortens it), so hold off predictions until then
+void CL_XerpFireZoomChanged(void)
+{
+    const xf_weapon_t *w;
+
+    if (!cl_xerp_fire->integer || cls.state != ca_active)
+        return;
+
+    w = xf_find_weapon(false);
+    if (w && w->mz_weapon == MZ_HYPERBLASTER) {
+        xf.zoom_busy_until = cls.realtime + 700;
+        if (XF_VERBOSE)
+            XF_LOG("zoom change - sniper hold for 700 ms\n");
+    }
+}
+
+void CL_XerpFireClear(void)
+{
+    memset(&xf, 0, sizeof(xf));
+}
+
+// called from CL_FinalizeCmd once per client frame with the sampled state
+void CL_XerpFireCheck(bool attack)
+{
+    const xf_weapon_t *w = NULL;
+    player_state_t *ps = &cl.frame.ps;
+    unsigned now;
+    bool edge;
+
+    edge = attack && !xf.prev_attack;
+    xf.prev_attack = attack;
+
+    if (!cl_xerp_fire->integer || !attack)
+        return;
+    if (cls.state != ca_active || cls.demo.playback)
+        return;
+    if (ps->pmove.pm_type != PM_NORMAL) {
+        if (edge && XF_VERBOSE)
+            XF_LOG("skip: not in normal play (pm_type %d)\n", ps->pmove.pm_type);
+        return;                     // dead, spectating, frozen
+    }
+    if (xf_bandaging()) {
+        if (edge && XF_VERBOSE)
+            XF_LOG("skip: bandaging\n");
+        return;
+    }
+    // age out predicted shots whose echo never came, so they stop counting
+    // as in-flight ammo
+    while (xf.tail != xf.head && cls.realtime -
+           xf.pending[xf.tail % XF_PENDING_MAX].time > XF_ECHO_WINDOW)
+        xf.tail++;
+
+    // the ammo stat is a round-trip stale, so shots we predicted but whose
+    // echoes haven't arrived yet (the pending ring) are subtracted — this
+    // stops auto streams from over-predicting past the end of the clip
+    if (ps->stats[STAT_AMMO] - (int)(xf.head - xf.tail) <= 0) {
+        if (edge && XF_VERBOSE)
+            XF_LOG("skip: clip empty (%d in stat, %u in flight)\n",
+                   ps->stats[STAT_AMMO], xf.head - xf.tail);
+        return;
+    }
+
+    w = xf_find_weapon(edge);       // logs its own skip when verbose
+    if (!w)
+        return;
+
+    now = cls.realtime;
+    if (w->mz_weapon == MZ_HYPERBLASTER &&
+        xf.zoom_busy_until && now < xf.zoom_busy_until) {
+        if (edge && XF_VERBOSE)
+            XF_LOG("skip: sniper zoom busy for %u more ms\n",
+                   xf.zoom_busy_until - now);
+        return;
+    }
+
+    now = cls.realtime;
+    if (xf.last_fire && now - xf.last_fire < w->refire) {
+        if (edge && XF_VERBOSE)
+            XF_LOG("skip: %s refire, %u ms of %u\n",
+                   w->name, now - xf.last_fire, w->refire);
+        return;
+    }
+    if (!edge && !w->automatic)
+        return;                     // semi-auto needs a fresh click
+
+    xf.last_fire = now;
+    if (XF_VERBOSE)
+        XF_LOG("predicted %s%s\n", w->name, edge ? "" : " (auto)");
+
+    // remember the shot so the server echo can be consumed
+    if (xf.head - xf.tail == XF_PENDING_MAX)
+        xf.tail++;
+    xf.pending[xf.head % XF_PENDING_MAX].time = now;
+    xf.pending[xf.head % XF_PENDING_MAX].mz_weapon = w->mz_weapon;
+    xf.head++;
+
+    // synthesize exactly what the server echo would have produced
+    mz.entity = cl.frame.clientNum + 1;
+    mz.weapon = w->mz_weapon;
+    mz.silenced = false;
+    CL_MuzzleFlash();
+}
+
+// called for each incoming svc_muzzleflash; true = already played locally
+bool CL_XerpFireSuppress(void)
+{
+    unsigned now, i;
+
+    if (!cl_xerp_fire->integer)
+        return false;
+    if (mz.entity != cl.frame.clientNum + 1)
+        return false;               // someone else's flash
+
+    now = cls.realtime;
+    while (xf.tail != xf.head &&
+           now - xf.pending[xf.tail % XF_PENDING_MAX].time > XF_ECHO_WINDOW) {
+        if (XF_VERBOSE)
+            XF_LOG("shot never echoed (mz %d) - server rejected it?\n",
+                   xf.pending[xf.tail % XF_PENDING_MAX].mz_weapon);
+        xf.tail++;                  // drop echoes that never came
+    }
+
+    for (i = xf.tail; i != xf.head; i++) {
+        // llsound 0 servers collapse all hitscan echoes to MZ_MACHINEGUN
+        // (see PlayWeaponSound in the game DLL), so accept that as a match
+        // for any pending shot; llsound 1 servers echo per-weapon codes
+        if (xf.pending[i % XF_PENDING_MAX].mz_weapon == mz.weapon ||
+            mz.weapon == MZ_MACHINEGUN) {
+            if (XF_VERBOSE)
+                XF_LOG("echo consumed, click-to-echo %u ms (mz %d)\n",
+                       now - xf.pending[i % XF_PENDING_MAX].time, mz.weapon);
+            // consume this and anything older
+            xf.tail = i + 1;
+            return true;
+        }
+    }
+    if (XF_VERBOSE)
+        XF_LOG("own fire NOT predicted (mz %d%s) - full round-trip delay\n",
+               mz.weapon, mz.silenced ? ", silenced" : "");
+    return false;                   // unpredicted (silencer, knife, ...): play it
+}

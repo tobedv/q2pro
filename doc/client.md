@@ -82,6 +82,9 @@
     - [scr\_lag\_y](#scr_lag_y)
     - [scr\_lag\_min](#scr_lag_min)
     - [scr\_lag\_max](#scr_lag_max)
+    - [cl\_xerp\_debug](#cl_xerp_debug)
+    - [cl\_xerp\_fire](#cl_xerp_fire)
+    - [cl\_xerp\_buffer](#cl_xerp_buffer)
     - [scr\_chathud](#scr_chathud)
     - [scr\_chathud\_lines](#scr_chathud_lines)
     - [scr\_chathud\_time](#scr_chathud_time)
@@ -844,6 +847,72 @@ displayed. Default value is 0.
 ### scr\_lag\_max  
 Specifies ping graph scale by defining the maximum value that can be
 displayed. Default value is 200.
+
+### cl\_xerp\_debug  
+Toggles the netcode instrumentation overlay, drawn at the right edge of
+the screen. Shows, per rendered frame: current ping (round-trip of the
+last acknowledged command), interpolation delay (how many milliseconds in
+the past the world is rendered, with the current lerp fraction), the
+interval between the two most recent server snapshots, snapshot jitter
+(smoothed average deviation of snapshot arrival from the expected server
+frame interval), the worst snapshot gap observed, and a count of stalls
+(snapshots that arrived more than 1.5x the expected interval late). The
+worst/stall peaks accumulate so a screenshot taken after a fight still
+captures what happened during it; they reset on level change or by
+toggling this cvar off and on. Purely diagnostic; has no effect on
+gameplay or rendering of the world. First member of the `cl_xerp_*`
+family of client-side netcode feel features. Hidden during demo
+playback. Default value is 0.
+
+-   0 — overlay hidden
+
+-   1 — overlay visible
+
+-   2 — overlay visible, plus a `xerpbuf` timing summary logged to the
+    console every 5 seconds: render-delay average/min/max over the
+    window, the adaptive buffer's current target, high/low clamp counts,
+    and starvation events. Combine with `logfile 2` to persist for
+    offline analysis; this is the data source for validating
+    `cl_xerp_buffer` settings.
+
+### cl\_xerp\_fire  
+Predicted local weapon fire feedback: when enabled, the muzzle flash and
+fire sound for your own shots play the instant the attack input is
+sampled, instead of after the server round-trip. The server's echoed
+muzzle flash is recognized and consumed so nothing plays twice. Fire
+effects only — bullets, hit detection, blood and damage remain fully
+server-authoritative, so this cannot create or remove a hit. Predicted
+weapons: MK23, akimbo pistols, MP5, M4, M3 shotgun, handcannon, and the
+SSG sniper rifle (except for 700 ms after a zoom change, mirroring the
+server's zoom-busy window). Knife and grenades keep the standard
+server-echo behavior, as do silenced shots. Known cosmetic
+limits: clicking during a reload or while bandaging may produce a local
+flash for a shot the server rejects; a silencer's first shot plays the
+regular fire sound locally. Inactive during demo playback and while
+spectating. Default value is 0.
+
+-   0 — standard behavior (fire feedback after server round-trip)
+
+-   1 — instant predicted fire feedback
+
+### cl\_xerp\_buffer  
+Adaptive interpolation buffer. The client normally renders a
+connect-timing-random 0–100 ms behind the newest server snapshot; that
+offset delays everything you see, including kill confirmation. When set
+above 0, client time is slewed gently (max 2 ms per render frame, never
+snapped) toward riding `value + 3x measured snapshot jitter`
+milliseconds behind the newest snapshot. If the buffer ever starves,
+extra margin is held for a few seconds before creeping back in. Lower
+values give a fresher view and faster feedback; raise the value if you
+see stutter on an unstable connection. The current delay is visible as
+`interp` in the `cl_xerp_debug` overlay. Inactive during demo playback.
+Default value is 0 (disabled, standard behavior).
+
+-   2 — as 1, plus every fire decision is logged to the console:
+    predictions, skip reasons (empty clip, refire, unpredicted weapon),
+    click-to-echo latency per shot, own shots that were never predicted,
+    and predicted shots whose echo never arrived. Set `logfile 2` to
+    persist the console to `logs/console.log` for later analysis.
 
 ### scr\_chathud  
 Toggles drawing of the last chat lines on the screen. Default value is

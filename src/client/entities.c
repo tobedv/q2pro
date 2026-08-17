@@ -291,6 +291,8 @@ static void set_active_state(void)
 
     SCR_EndLoadingPlaque();     // get rid of loading plaque
     SCR_LagClear();
+    SCR_XerpDebugClear();
+    CL_XerpFireClear();
     Con_Close(false);           // get rid of connection screen
 
     CL_CheckForPause();
@@ -394,6 +396,8 @@ void CL_DeltaFrame(void)
         Com_Error(ERR_DROP, "%s: server time overflowed", __func__);
 
     cl.servertime = framenum * CL_FRAMETIME;
+    SCR_XerpDebugSample();
+    CL_XerpBufferSnapshot();
 #if USE_FPS
     cl.keyservertime = (framenum / cl.frametime.div) * BASE_FRAMETIME;
 #endif

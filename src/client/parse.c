@@ -1542,7 +1542,8 @@ void CL_ParseServerMessage(void)
 
 		case svc_muzzleflash:
 			CL_ParseMuzzleFlashPacket(MZ_SILENCED);
-			CL_MuzzleFlash();
+			if (!CL_XerpFireSuppress())
+				CL_MuzzleFlash();
 			break;
 
 		case svc_muzzleflash2:
