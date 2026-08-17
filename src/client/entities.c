@@ -590,6 +590,9 @@ static void CL_AddPacketEntities(void)
                 // use predicted origin
                 VectorCopy(cl.playerEntityOrigin, ent.origin);
                 VectorCopy(cl.playerEntityOrigin, ent.oldorigin);
+            } else if (CL_XerpEntsOrigin(cent, s1, ent.origin)) {
+                // extrapolated one frame forward (cl_xerp_ents)
+                VectorCopy(ent.origin, ent.oldorigin);
             } else {
                 // interpolate origin
                 LerpVector(cent->prev.origin, cent->current.origin,

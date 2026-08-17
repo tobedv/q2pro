@@ -555,3 +555,49 @@ bool CL_XerpFireSuppress(void)
                mz.weapon, mz.silenced ? ", silenced" : "");
     return false;                   // unpredicted (silencer, knife, ...): play it
 }
+
+/*
+==============================================================================
+XERP ENTS — client-side extrapolation of remote players (cl_xerp_ents,
+Phase 2 of the cl_xerp_* netcode feel features).
+
+Remote players normally render interpolated between the two most recent
+snapshots — up to a full server frame in the past. When enabled, the
+interpolation window is shifted one frame forward: render between the
+newest snapshot and its velocity projection, same lerp fraction. This is
+the same effect server-side xerp (use_xerp) produces, computed locally so
+it works on every server. Purely visual; hitboxes are server-side.
+
+While enabled, CL_SendCvarSync reports cl_xerp 0 to the server so
+use_xerp servers don't extrapolate on top of us (double xerp).
+==============================================================================
+*/
+
+cvar_t *cl_xerp_ents;
+
+bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
+{
+    vec3_t vel, pred;
+    float speed;
+
+    if (!cl_xerp_ents->integer || cls.demo.playback)
+        return false;
+    if (s1->modelindex != MODELINDEX_PLAYER)
+        return false;               // players only for now
+    if (s1->event == EV_PLAYER_TELEPORT)
+        return false;
+
+    // per-server-frame displacement between the two newest snapshots;
+    // a fresh entity has prev == current, giving zero and falling through
+    VectorSubtract(cent->current.origin, cent->prev.origin, vel);
+    speed = VectorLength(vel) * (1000.0f / CL_FRAMETIME);
+
+    if (speed < 120)
+        return false;               // low-speed wiggle: don't guess
+    if (speed > 2000)
+        return false;               // teleport/respawn-sized jump: snap
+
+    VectorAdd(cent->current.origin, vel, pred);
+    LerpVector(cent->current.origin, pred, cl.lerpfrac, org);
+    return true;
+}

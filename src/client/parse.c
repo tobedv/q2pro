@@ -1379,7 +1379,13 @@ AQTION Protocol CVAR Sync
 void CL_SendCvarSync(cvar_t *var)
 {
 	char val_str[CVARSYNC_MAXSIZE];
-	Q_strlcpy(val_str, var->string, CVARSYNC_MAXSIZE);
+
+	// cl_xerp_ents extrapolates locally, so report cl_xerp 0 to the
+	// server — otherwise use_xerp servers would extrapolate on top of us
+	if (cl_xerp_ents->integer && !strcmp(var->name, "cl_xerp"))
+		Q_strlcpy(val_str, "0", CVARSYNC_MAXSIZE);
+	else
+		Q_strlcpy(val_str, var->string, CVARSYNC_MAXSIZE);
 	val_str[CVARSYNC_MAXSIZE - 1] = 0;
 
 	if (!cls.netchan.protocol) {
@@ -1434,9 +1440,20 @@ static void CL_ParseCvarSync(void)
 
 		Com_Printf("CL adding cvarsync: %s, %s\n", cl.cvarsync[i].name, var->string);
 
-		if (strcmp(cl.cvarsync[i].value, var->string)) // if value is not default, sync the value
+		if (strcmp(cl.cvarsync[i].value, var->string) // if value is not default, sync the value
+			|| (cl_xerp_ents->integer && !strcmp(var->name, "cl_xerp")))
 			CL_SendCvarSync(var);
 	}
+}
+
+// cl_xerp_ents toggled: re-report cl_xerp so the server's xerp gate for
+// this player matches the new local-extrapolation state
+void CL_XerpEntsChanged(cvar_t *self)
+{
+	cvar_t *var = Cvar_FindVar("cl_xerp");
+
+	if (var && (var->flags & CVAR_SYNC))
+		CL_SendCvarSync(var);
 }
 #endif
 

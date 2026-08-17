@@ -2773,6 +2773,10 @@ static void CL_InitLocal(void)
     cl_predict = Cvar_Get("cl_predict", "1", 0);
     cl_xerp_fire = Cvar_Get("cl_xerp_fire", "0", 0);
     cl_xerp_buffer = Cvar_Get("cl_xerp_buffer", "0", 0);
+    cl_xerp_ents = Cvar_Get("cl_xerp_ents", "0", 0);
+#ifdef PROTOCOL_VERSION_AQTION_CVARSYNC
+    cl_xerp_ents->changed = CL_XerpEntsChanged;
+#endif
     cl_predict->changed = cl_predict_changed;
 	cl_predict_crouch = Cvar_Get("cl_predict_crouch", "1", 0);
     cl_kickangles = Cvar_Get("cl_kickangles", "1", CVAR_CHEAT);
