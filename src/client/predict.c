@@ -952,6 +952,14 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     VectorSubtract(cent->current.origin, cent->prev.origin, vel);
     speed = VectorLength(vel) * (1000.0f / CL_FRAMETIME);
 
+    // teleport/respawn-scale jumps: bail before grading so spawn
+    // relocations don't pollute the prediction-error statistics
+    if (speed > 2000) {
+        xe_stats.jump++;
+        xe_hist[s1->number].frame = 0;
+        return false;
+    }
+
     // grade the previous projection against where the player really went
     // (once per entity per snapshot: the store below ends the comparison),
     // and carry the error so it can be blended out instead of snapping
@@ -990,12 +998,6 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
             return false;           // genuinely stationary: don't guess
         }
     }
-    if (speed > 2000) {
-        xe_stats.jump++;
-        xe_hist[s1->number].frame = 0;
-        return false;               // teleport/respawn-sized jump: snap
-    }
-
     VectorAdd(cent->current.origin, vel, pred);
 
     VectorCopy(pred, xe_hist[s1->number].pred);
