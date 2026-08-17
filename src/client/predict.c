@@ -322,12 +322,47 @@ remain fully server-authoritative — this cannot create or remove a hit.
 
 cvar_t *cl_xerp_fire;
 
-// cl_xerp_fire 2: log every fire decision to the console (persist with
-// "logfile 2", which writes the console to logs/console.log)
+// All xerp telemetry is written to its own file, logs/xerp.log, instead of
+// the console — full per-shot data without drowning out chat and game
+// messages. Rare anomalies (zoom REVERTED) additionally go to the console.
+static qhandle_t xerp_logfile;
+
+void CL_XerpLog(const char *fmt, ...)
+{
+    char buf[MAXPRINTMSG], line[MAXPRINTMSG], stamp[32], path[MAX_OSPATH];
+    va_list ap;
+    size_t len;
+
+    if (SCR_XerpDebugLevel() < 2)
+        return;
+    if (xerp_logfile == (qhandle_t)-1)
+        return;                     // open failed earlier, stay quiet
+    if (!xerp_logfile) {
+        xerp_logfile = FS_EasyOpenFile(path, sizeof(path),
+                                       FS_MODE_APPEND | FS_BUF_LINE | FS_FLAG_TEXT,
+                                       "logs/", "xerp", ".log");
+        if (!xerp_logfile) {
+            xerp_logfile = (qhandle_t)-1;
+            return;
+        }
+        Com_Printf("Logging xerp telemetry to %s\n", path);
+    }
+
+    va_start(ap, fmt);
+    Q_vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    Com_FormatLocalTime(stamp, sizeof(stamp), "%H:%M:%S");
+    len = Q_snprintf(line, sizeof(line), "[%s] %s", stamp, buf);
+    if (len < sizeof(line))
+        FS_Write(line, len, xerp_logfile);
+}
+
+// cl_xerp_fire 2: log every fire decision to logs/xerp.log
 #define XF_VERBOSE  (cl_xerp_fire->integer >= 2)
 
-#define XF_LOG(...) \
-    Com_Printf("xerpfire %u: " , cls.realtime), Com_Printf(__VA_ARGS__)
+#define XF_LOG(fmt, ...) \
+    CL_XerpLog("xerpfire %u: " fmt, cls.realtime, ##__VA_ARGS__)
 
 typedef struct {
     const char  *wwep;      // world weapon (vwep) model substring, from the
@@ -610,7 +645,7 @@ static void xe_report(void)
     if (cls.realtime - xe_stats.start < 5000)
         return;
 
-    Com_Printf("xerpents %u: players %d ext, err avg %.1f max %.1f (%d checks); "
+    CL_XerpLog("xerpents %u: players %d ext, err avg %.1f max %.1f (%d checks); "
                "proj %d ext, err avg %.1f max %.1f (%d checks); "
                "fell back %d slow %d jump\n",
                cls.realtime,
@@ -808,7 +843,7 @@ void CL_XerpZoomCommand(const char *cmd, const char *args)
     xz.mode = mode;
     xz.time = cls.realtime;
     if (SCR_XerpDebugLevel() >= 2)
-        Com_Printf("xerpzoom %u: predicted %dx (fov %d, server fov %.0f)\n",
+        CL_XerpLog("xerpzoom %u: predicted %dx (fov %d, server fov %.0f)\n",
                    cls.realtime, mode, xz_mode_fov(mode), cl.frame.ps.fov);
 }
 
@@ -826,15 +861,20 @@ float CL_XerpZoomFov(float fov)
     // (zoom refused: bandaging, weapon dropped, ...)
     if (fabsf(cl.frame.ps.fov - xz_mode_fov(xz.mode)) < 2) {
         if (SCR_XerpDebugLevel() >= 2)
-            Com_Printf("xerpzoom %u: confirmed %dx after %u ms\n",
+            CL_XerpLog("xerpzoom %u: confirmed %dx after %u ms\n",
                        cls.realtime, xz.mode, cls.realtime - xz.time);
         xz.mode = 0;
         return fov;
     }
     if (cls.realtime - xz.time > 1500) {
         if (SCR_XerpDebugLevel() >= 2)
+            // rare and important: console AND telemetry file
             Com_Printf("xerpzoom %u: REVERTED %dx after %u ms "
                        "(server fov %.0f) - mirror mispredicted?\n",
+                       cls.realtime, xz.mode, cls.realtime - xz.time,
+                       cl.frame.ps.fov);
+            CL_XerpLog("xerpzoom %u: REVERTED %dx after %u ms "
+                       "(server fov %.0f)\n",
                        cls.realtime, xz.mode, cls.realtime - xz.time,
                        cl.frame.ps.fov);
         xz.mode = 0;

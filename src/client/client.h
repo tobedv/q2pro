@@ -881,6 +881,7 @@ void CL_XerpEntsClear(void);
 void CL_XerpZoomCommand(const char *cmd, const char *args);
 float CL_XerpZoomFov(float fov);
 void CL_XerpZoomClear(void);
+void CL_XerpLog(const char *fmt, ...) q_printf(1, 2);
 void CL_Trace(trace_t *tr, const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs, int contentmask);
 
 

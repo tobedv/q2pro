@@ -3049,7 +3049,7 @@ static void CL_TimeBufferStats(int delay, int hi_clamp, int lo_clamp)
     if (cls.realtime - xb_stats.start < XB_STATS_WINDOW)
         return;
 
-    Com_Printf("xerpbuf %u: delay avg %d min %d max %d ms, "
+    CL_XerpLog("xerpbuf %u: delay avg %d min %d max %d ms, "
                "clamps hi %d lo %d, jitter %.1f, frames %d\n",
                cls.realtime,
                xb_stats.delay_sum / xb_stats.frames,
