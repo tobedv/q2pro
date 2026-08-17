@@ -164,16 +164,23 @@ own data, and **removed** rather than left as dormant switches:
   echo-driven reconstruction that steps on raw own-entity M4 flashes,
   renders nothing, and logs `|kick − A|` per render frame
   (`cl_xerp_debug 3`: `xerpview ... res` + `xerpkick` decisions; grade
-  with `tools/xerpkick-residual.py`). On a local 10 Hz listen server
-  (real game DLL, automated runs) the mirror measured **100.0% exact —
-  zero residual on every render frame** across full mags with dry-fire
-  tails, tap sprays with sub-think release blips, burst mode (correctly
-  flat), and moving/crouched mags. Still open before phase B: the same
-  bar under real network conditions (EU: jitter, loss, and the
-  framediv > 1 sound-grid deferral on 20/30 Hz servers), plus
-  movement/damage contamination magnitudes from real play. Prediction
-  may only be revived by driving this same machine from predicted
-  shots after field residuals hold ~0 across sessions and stances. Lessons kept: discrete events can be time-shifted;
+  with `tools/xerpkick-residual.py`). Validated at **100.0% exact —
+  zero residual on every render frame** in two environments: a local
+  10 Hz listen server (real game DLL), and the remote AWS field server
+  (production-style q2proded r1 Jul 2024 + Q2Admin, sv_fps 10,
+  llsound 1, 11 ms RTT) — across full mags with dry-fire tails, tap
+  sprays with quick re-presses and sub-think release blips, burst mode
+  (correctly flat while real 3-round bursts echoed), and crouched mags.
+  Contamination is quantified and stays server-channel-only, exactly as
+  designed: sprint-spraying showed up to ~+1.25° of run_pitch + bob +
+  landing kicks riding the kick channel (the mirror correctly does not
+  follow it), and the 2026-08-17 field traces show damage kicks
+  additive over the −16 cap with the DAMAGE_TIME decay. Still open:
+  framediv > 1 sound-grid deferral (20/30 Hz servers — the production
+  server runs 10 Hz), behavior under real packet loss, and phase B's
+  clamp design for how contamination passes through the S − A render.
+  Prediction may only be revived by driving this same machine from
+  predicted shots, with Tobias's eye in the loop. Lessons kept: discrete events can be time-shifted;
   continuous curves must be *regenerated*; regeneration demands the
   true state machine, proven passively before it touches the screen.
 - **Predicted sniper zoom** (`cl_xerp_zoom`): telemetry showed zoom-in
