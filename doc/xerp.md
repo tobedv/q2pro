@@ -136,6 +136,17 @@ own data, and **removed** rather than left as dormant switches:
   requires a third-snapshot renderer — a possible future *stability*
   option for jittery connections (it can only add delay, never
   freshness).
+- **Predicted spray climb**: the M4's recoil climb was briefly led
+  client-side so the view punch would track the predicted bangs. Every
+  smoothing shape still deviated from classic, and the reason is
+  fundamental: a *discrete* event (a bang) can be time-shifted with no
+  shape change, but a *continuous* curve cannot be moved earlier
+  without extra velocity during the shift — which the eye reads as
+  chop, ripple, or a too-fast onset, depending on the disguise.
+  Classic-rate fidelity and a climb lead are mathematically
+  incompatible, so the climb stays fully server-timed. (The per-frame
+  recoil trace built to validate this, `cl_xerp_debug 3` /
+  `xerpview` lines, remains as an instrument.)
 - **Predicted sniper zoom** (`cl_xerp_zoom`): telemetry showed zoom-in
   confirm times of ~650–700 ms at 15 ms ping — the delay is TNG's
   deliberate server-side weapon-settle window, not the network, and

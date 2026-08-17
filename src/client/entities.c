@@ -1253,9 +1253,7 @@ static void CL_SetupFirstPersonView(void)
         lerp = CL_KEYLERPFRAC;
 
         LerpAngles(ops->kick_angles, ps->kick_angles, lerp, kickangles);
-        float predkick = CL_XerpFireKickPitch();        // predicted spray climb
-        CL_XerpViewTrace(kickangles[PITCH], predkick);
-        kickangles[PITCH] += predkick;
+        CL_XerpViewTrace(kickangles[PITCH], 0);     // recoil trace (debug 3)
         VectorAdd(cl.refdef.viewangles, kickangles, cl.refdef.viewangles);
     }
 
