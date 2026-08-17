@@ -585,50 +585,45 @@ float CL_XerpFireKickPitch(void)
 {
     static float    cur;
     static unsigned last;
-    unsigned i, now;
-    float target, frac;
-    int in_flight = 0;
+    unsigned now;
+    float target, frac, lead;
+    bool spraying;
 
     if (!cl_xerp_fire->integer || xf_mode.m4_burst) {
         cur = 0;
         return 0;
     }
 
-    for (i = xf.tail; i != xf.head; i++)
-        if (xf_weapons[xf.pending[i % XF_PENDING_MAX].widx].mz_weapon ==
-            MZ_ROCKET)
-            in_flight++;
+    // an M4 full-auto spray is active: trigger held with a recent M4
+    // prediction. The lead is a CONSTANT while spraying — the average
+    // earliness, measured echo latency over the fire cycle, in climb
+    // units — because any per-shot dynamics on top of the server's
+    // smooth ramp read as shake. Constant + smooth ramp = smooth ramp.
+    spraying = xf.prev_attack &&
+        xf.last_widx >= 0 &&
+        xf_weapons[xf.last_widx].mz_weapon == MZ_ROCKET &&
+        xf.last_fire && cls.realtime - xf.last_fire < 300;
 
-    if (in_flight > 4)
-        in_flight = 4;              // bound the predicted share
-    // mirror the server's 23-shot climb cap: acked shots (~stream echoes)
-    // plus our lead must never exceed where classic recoil tops out
-    if (xf.stream_echoes + in_flight > 23)
-        in_flight = xf.stream_echoes < 23 ? 23 - xf.stream_echoes : 0;
-    target = in_flight * -1.5f;
+    if (spraying) {
+        lead = xf_echo_latency / (float)xf_cycle(&xf_weapons[xf.last_widx]);
+        if (lead > 3)
+            lead = 3;
+        // mirror the server's 23-shot climb cap
+        if (xf.stream_echoes >= 23)
+            lead = 0;
+        target = lead * -1.5f;
+    } else {
+        target = 0;
+    }
 
-    // the in-flight count is a square wave at the fire rate (+1 per
-    // prediction, -1 per echo), so a symmetric filter always ripples.
-    // Asymmetric instead: new shots grow the lead fast (that IS the
-    // responsiveness), arriving echoes shrink it slowly — during a steady
-    // spray the brief zero-dips between shots never pull the lead down,
-    // so it holds flat; only a genuinely ended stream lets it settle.
     now = cls.realtime;
     if (!last || now - last > 400) {
         cur = target;
     } else {
-        // classic-pattern fidelity: while the trigger is held, echoes
-        // shrinking the lead are masked (slow decay); on release the
-        // classic kick snaps back within ~one server frame, so match
-        // that with a fast decay instead of inventing a soft tail
-        float tc;
-
-        if (fabsf(target) > fabsf(cur))
-            tc = 30;                    // new shot: lead grows fast
-        else if (xf.prev_attack)
-            tc = 250;                   // mid-spray echo dip: hold the lead
-        else
-            tc = 100;                   // released: classic snap-back pace
+        // ease in on spray start; classic snap-back pace (~one server
+        // frame) on release — the prediction shifts classic behavior
+        // earlier in time, it never changes its shape
+        float tc = fabsf(target) > fabsf(cur) ? 30 : 100;
 
         frac = (now - last) * (1.0f / tc);
         if (frac > 1)
