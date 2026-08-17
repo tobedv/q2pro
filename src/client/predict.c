@@ -601,6 +601,10 @@ float CL_XerpFireKickPitch(void)
 
     if (in_flight > 4)
         in_flight = 4;              // bound the predicted share
+    // mirror the server's 23-shot climb cap: acked shots (~stream echoes)
+    // plus our lead must never exceed where classic recoil tops out
+    if (xf.stream_echoes + in_flight > 23)
+        in_flight = xf.stream_echoes < 23 ? 23 - xf.stream_echoes : 0;
     target = in_flight * -1.5f;
 
     // the in-flight count is a square wave at the fire rate (+1 per
@@ -613,7 +617,18 @@ float CL_XerpFireKickPitch(void)
     if (!last || now - last > 400) {
         cur = target;
     } else {
-        float tc = fabsf(target) > fabsf(cur) ? 30 : 250;
+        // classic-pattern fidelity: while the trigger is held, echoes
+        // shrinking the lead are masked (slow decay); on release the
+        // classic kick snaps back within ~one server frame, so match
+        // that with a fast decay instead of inventing a soft tail
+        float tc;
+
+        if (fabsf(target) > fabsf(cur))
+            tc = 30;                    // new shot: lead grows fast
+        else if (xf.prev_attack)
+            tc = 250;                   // mid-spray echo dip: hold the lead
+        else
+            tc = 100;                   // released: classic snap-back pace
 
         frac = (now - last) * (1.0f / tc);
         if (frac > 1)
