@@ -1545,7 +1545,8 @@ void CL_ParseServerMessage(void)
 
 		case svc_sound:
 			CL_ParseStartSoundPacket();
-			S_ParseStartSound();
+			if (!CL_XerpFireSoundSuppress())
+				S_ParseStartSound();
 			break;
 
         case svc_spawnbaseline:

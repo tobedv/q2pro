@@ -877,6 +877,7 @@ bool CL_XerpFireSuppress(void);
 void CL_XerpFireZoomChanged(void);
 void CL_XerpFireModeToggle(void);
 void CL_XerpFireLCA(const char *s);
+bool CL_XerpFireSoundSuppress(void);
 void CL_XerpKickEcho(void);
 void CL_XerpKickFrame(void);
 float CL_XerpKickDelta(float lerp, float kick_pitch);

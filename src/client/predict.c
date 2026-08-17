@@ -1053,6 +1053,59 @@ void CL_XerpFireClear(void)
     memset(&xki, 0, sizeof(xki));
 }
 
+/*
+llsound 0 servers deliver weapon fire audio via gi.sound -> svc_sound
+instead of the muzzleflash event (which such servers still send, for the
+visual, with collapsed codes). The muzzleflash suppression alone would
+let every predicted shot double on those servers through the sound
+channel. Suppress an own-entity CHAN_WEAPON fire sound when it names the
+fire wav of a weapon class predicted within the echo window. Exact-name
+matched (the server-side base wavs from PlayWeaponSound), so reloads,
+clicks, silencer and everything else pass through untouched.
+*/
+bool CL_XerpFireSoundSuppress(void)
+{
+    static const struct {
+        const char  *wav;       // server-side fire wav (PlayWeaponSound)
+        int         mz_weapon;
+    } fire_wavs[] = {
+        { "weapons/mk23fire.wav",   MZ_BLASTER },
+        { "weapons/mp5fire.wav",    MZ_MACHINEGUN },
+        { "weapons/m4a1fire.wav",   MZ_ROCKET },
+        { "weapons/shotgf1b.wav",   MZ_SHOTGUN },
+        { "weapons/cannon_fire.wav", MZ_SSHOTGUN },
+        { "weapons/ssgfire.wav",    MZ_HYPERBLASTER },
+    };
+    const xf_weapon_t *held;
+    const char *name;
+    unsigned i;
+
+    if (!cl_xerp_fire->integer || cls.demo.playback)
+        return false;
+    if (snd.entity != cl.frame.clientNum + 1)
+        return false;               // someone else's sound
+    if (snd.channel != CHAN_WEAPON && snd.channel != CHAN_ITEM)
+        return false;               // CHAN_ITEM: the HC's double-barrel boom
+    if (!xf.last_fire || cls.realtime - xf.last_fire > XF_ECHO_WINDOW)
+        return false;               // no predicted stream active
+
+    if (snd.index < 0 || snd.index >= cl.csr.max_sounds)
+        return false;
+    name = cl.configstrings[cl.csr.sounds + snd.index];
+
+    held = xf_find_weapon(false);
+    for (i = 0; i < q_countof(fire_wavs); i++) {
+        if (strcmp(name, fire_wavs[i].wav))
+            continue;
+        if (held && held->mz_weapon == fire_wavs[i].mz_weapon) {
+            if (XF_VERBOSE)
+                XF_LOG("svc_sound absorbed (%s) - llsound 0 twin\n", name);
+            return true;
+        }
+    }
+    return false;
+}
+
 // TNG blocks all firing during the round-start countdown, signalled only
 // by its centerprints — hold predictions through "LIGHTS.../CAMERA..."
 // and release on "ACTION!". The strings have been stable since the 90s;
