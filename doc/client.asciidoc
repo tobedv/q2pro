@@ -517,8 +517,16 @@ cl_xerp_fire::
     "logfile 2"). Inactive during demo playback and spectating.
     Default value is 0.
 
+cl_xerp_zoom::
+    Predicted sniper zoom: the client mirrors the zoom state machine
+    and applies the fov locally the moment the weapon/lens command is
+    sent, handing off to the server value on arrival (reverting after
+    1.5 s if refused). Purely visual. cl_xerp_debug 2 logs "xerpzoom"
+    lines. Inactive during demo playback. Default value is 0.
+
 cl_xerp_ents::
-    Client-side extrapolation of remote players: shifts the
+    Client-side extrapolation of remote players, thrown grenades and
+    throwing knives (ballistic projection with gravity): shifts the
     interpolation window one server frame forward (newest snapshot to
     its velocity projection), the same visual effect server-side xerp
     produces, computed locally. Purely visual. Skipped below 120 ups,

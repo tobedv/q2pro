@@ -84,6 +84,7 @@
     - [scr\_lag\_max](#scr_lag_max)
     - [cl\_xerp\_debug](#cl_xerp_debug)
     - [cl\_xerp\_fire](#cl_xerp_fire)
+    - [cl\_xerp\_zoom](#cl_xerp_zoom)
     - [cl\_xerp\_ents](#cl_xerp_ents)
     - [cl\_xerp\_buffer](#cl_xerp_buffer)
     - [scr\_chathud](#scr_chathud)
@@ -896,8 +897,25 @@ spectating. Default value is 0.
 
 -   1 — instant predicted fire feedback
 
+### cl\_xerp\_zoom  
+Predicted sniper zoom. The scope normally appears a full round-trip
+after the zoom key, because the `weapon`/`lens` command travels to the
+server and the fov change travels back. When enabled, the client
+mirrors the zoom state machine (1x/2x/4x/6x, fov 90/45/20/10) and
+applies the fov locally the moment the command is sent, handing off to
+the server value when it arrives — or reverting after 1.5 seconds if
+the server refused the zoom (e.g. while bandaging). Purely visual: shot
+timing is still governed by the fire predictor's zoom-busy window and
+the server. With `cl_xerp_debug 2`, each prediction logs a `xerpzoom`
+line. Inactive during demo playback. Default value is 0.
+
+-   0 — scope appears on server confirmation (standard)
+
+-   1 — scope appears instantly
+
 ### cl\_xerp\_ents  
-Client-side extrapolation of remote players. Instead of interpolating
+Client-side extrapolation of remote players, thrown grenades and
+throwing knives. Instead of interpolating
 between the two most recent server snapshots (rendering up to a full
 server frame in the past), the interpolation window is shifted one
 frame forward: players render between the newest snapshot and its

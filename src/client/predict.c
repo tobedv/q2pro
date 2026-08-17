@@ -620,10 +620,19 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     vec3_t vel, pred;
     float speed, err;
 
+    bool proj = false;
+
     if (!cl_xerp_ents->integer || cls.demo.playback)
         return false;
-    if (s1->modelindex != MODELINDEX_PLAYER)
-        return false;               // players only for now
+    if (s1->modelindex != MODELINDEX_PLAYER) {
+        // thrown grenades and knives are ballistic and extrapolate well;
+        // everything else keeps plain interpolation
+        const char *m = cl.configstrings[cl.csr.models + s1->modelindex];
+        if (strstr(m, "grenade2") || strstr(m, "objects/knife"))
+            proj = true;
+        else
+            return false;
+    }
     if (s1->event == EV_PLAYER_TELEPORT)
         return false;
 
@@ -666,6 +675,8 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     }
 
     VectorAdd(cent->current.origin, vel, pred);
+    if (proj)
+        pred[2] -= 8;               // one server frame of gravity (800 ups^2)
 
     VectorCopy(pred, xe_hist[s1->number].pred);
     xe_hist[s1->number].frame = cl.frame.number;
@@ -684,4 +695,127 @@ void CL_XerpEntsClear(void)
 {
     memset(xe_hist, 0, sizeof(xe_hist));
     memset(&xe_stats, 0, sizeof(xe_stats));
+}
+
+/*
+==============================================================================
+XERP ZOOM — predicted sniper zoom (cl_xerp_zoom).
+
+The scope normally appears a full round-trip after the zoom key: the
+"weapon"/"lens" command travels to the server, which changes ps.fov, which
+travels back. Since zooming is client-initiated, the client mirrors TNG's
+zoom state machine (1x-2x-4x-6x, fovs 90/45/20/10) and applies the fov
+locally the moment the command is sent, then hands off to the server value
+when it arrives (or reverts after 1.5 s if the server refused, e.g. while
+bandaging). Visual only — the shot itself is governed by cl_xerp_fire's
+zoom-busy window and, as always, the server.
+==============================================================================
+*/
+
+cvar_t *cl_xerp_zoom;
+
+static struct {
+    int         mode;       // predicted zoom: 1/2/4/6, 0 = inactive
+    unsigned    time;
+} xz;
+
+static int xz_mode_fov(int mode)
+{
+    switch (mode) {
+    case 2:  return 45;     // SNIPER_FOV2
+    case 4:  return 20;     // SNIPER_FOV4
+    case 6:  return 10;     // SNIPER_FOV6
+    default: return 90;     // SNIPER_FOV1
+    }
+}
+
+static int xz_fov_mode(float fov)
+{
+    if (fov <= 15) return 6;
+    if (fov <= 32) return 4;
+    if (fov <= 67) return 2;
+    return 1;
+}
+
+static int xz_zoom_in(int mode, bool overflow)
+{
+    switch (mode) {
+    case 1:  return 2;
+    case 2:  return 4;
+    case 4:  return 6;
+    default: return overflow ? 1 : 6;
+    }
+}
+
+static int xz_zoom_out(int mode, bool overflow)
+{
+    switch (mode) {
+    case 6:  return 4;
+    case 4:  return 2;
+    case 2:  return 1;
+    default: return overflow ? 6 : 1;
+    }
+}
+
+// called when a "weapon" or "lens" command is forwarded to the server
+void CL_XerpZoomCommand(const char *cmd, const char *args)
+{
+    const xf_weapon_t *w;
+    int mode, n;
+
+    if (!cl_xerp_zoom->integer || cls.state != ca_active || cls.demo.playback)
+        return;
+    if (cl.frame.ps.pmove.pm_type != PM_NORMAL)
+        return;
+    w = xf_find_weapon(false);
+    if (!w || w->mz_weapon != MZ_HYPERBLASTER)
+        return;                     // zoom only exists on the sniper
+
+    mode = xz.mode ? xz.mode : xz_fov_mode(cl.frame.ps.fov);
+
+    if (!strcmp(cmd, "weapon")) {
+        mode = xz_zoom_in(mode, true);      // mirror of _ZoomIn(ent, true)
+    } else {
+        n = atoi(args);
+        if (n == 1 || n == 2 || n == 4 || n == 6)
+            mode = n;
+        else if (!Q_stricmp(args, "in"))
+            mode = xz_zoom_in(mode, false);
+        else if (!Q_stricmp(args, "out"))
+            mode = xz_zoom_out(mode, false);
+        else
+            mode = xz_zoom_in(mode, true);
+    }
+
+    xz.mode = mode;
+    xz.time = cls.realtime;
+    if (SCR_XerpDebugLevel() >= 2)
+        Com_Printf("xerpzoom %u: predicted %dx (fov %d, server fov %.0f)\n",
+                   cls.realtime, mode, xz_mode_fov(mode), cl.frame.ps.fov);
+}
+
+// applied where the view fov is computed each frame
+float CL_XerpZoomFov(float fov)
+{
+    if (!xz.mode)
+        return fov;
+    if (!cl_xerp_zoom->integer || cls.demo.playback) {
+        xz.mode = 0;
+        return fov;
+    }
+
+    // hand off once the server's fov catches up; give up if it never does
+    // (zoom refused: bandaging, weapon dropped, ...)
+    if (fabsf(cl.frame.ps.fov - xz_mode_fov(xz.mode)) < 2 ||
+        cls.realtime - xz.time > 1500) {
+        xz.mode = 0;
+        return fov;
+    }
+
+    return xz_mode_fov(xz.mode);
+}
+
+void CL_XerpZoomClear(void)
+{
+    memset(&xz, 0, sizeof(xz));
 }
