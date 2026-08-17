@@ -372,18 +372,23 @@ typedef struct {
                             // fallback, absent for center-handed players
     const char  *name;      // for cl_xerp_fire 2 logging
     int         mz_weapon;  // MZ_* code the server echoes for this weapon
-    unsigned    refire;     // minimum ms between predicted shots
+    unsigned    refire;     // ms between fire cycles, measured from echoes
     bool        automatic;  // keeps firing while attack is held
+    int         follow;     // extra shots 100 ms after each cycle start
+                            // (akimbo: the second pistol's bang)
 } xf_weapon_t;
 
+// refire values are field-measured server echo cadences, not guesses:
+// mk23 full-auto cycles at 400 ms, akimbo fires 100 ms pairs every 400 ms,
+// mp5/m4 stream at the 100 ms server frame, m3 pump ~900 ms
 static const xf_weapon_t xf_weapons[] = {
-    { "w_mk23",    "v_blast",  "mk23",   MZ_BLASTER,      300, true  },
-    { "w_mp5",     "v_machn",  "mp5",    MZ_MACHINEGUN,   100, true  },
-    { "w_m4",      "v_m4",     "m4",     MZ_ROCKET,       100, true  },
-    { "w_super90", "v_shotg",  "m3",     MZ_SHOTGUN,     1000, false },
-    { "w_cannon",  "v_cannon", "hc",     MZ_SSHOTGUN,    1500, false },
-    { "w_akimbo",  "v_dual",   "akimbo", MZ_BLASTER,      160, true  },
-    { "w_sniper",  "v_sniper", "ssg",    MZ_HYPERBLASTER, 1300, false },
+    { "w_mk23",    "v_blast",  "mk23",   MZ_BLASTER,      400, true,  0 },
+    { "w_mp5",     "v_machn",  "mp5",    MZ_MACHINEGUN,   100, true,  0 },
+    { "w_m4",      "v_m4",     "m4",     MZ_ROCKET,       100, true,  0 },
+    { "w_super90", "v_shotg",  "m3",     MZ_SHOTGUN,      900, false, 0 },
+    { "w_cannon",  "v_cannon", "hc",     MZ_SSHOTGUN,    1500, false, 0 },
+    { "w_akimbo",  "v_dual",   "akimbo", MZ_BLASTER,      400, true,  1 },
+    { "w_sniper",  "v_sniper", "ssg",    MZ_HYPERBLASTER, 1300, false, 0 },
     // absent on purpose: knife, grenade — those keep today's server-echo
     // behavior. The sniper is predicted except during its zoom-busy window
     // (see CL_XerpFireZoomChanged).
@@ -441,6 +446,7 @@ static struct {
     unsigned    zoom_busy_until;    // sniper: mirrors the server's WEAPON_BUSY
                                     // window after a zoom change
     int         burst_left;         // shots remaining in a 3RB trigger pull
+    int         follow_left;        // paired shots left in this fire cycle
     struct {
         unsigned    time;
         int         mz_weapon;
@@ -453,6 +459,7 @@ static struct {
 // reset on level change since the server persists it per connection
 static struct {
     bool    mp5_burst, m4_burst;
+    bool    mk23_semi;      // server default is 0 = full auto
 } xf_mode;
 
 // echo watchdog: if the oldest in-flight prediction is this stale, stop
@@ -495,7 +502,12 @@ void CL_XerpFireModeToggle(void)
     w = xf_find_weapon(false);
     if (!w)
         return;
-    if (w->mz_weapon == MZ_MACHINEGUN) {
+    if (w->mz_weapon == MZ_BLASTER && !strcmp(w->name, "mk23")) {
+        xf_mode.mk23_semi = !xf_mode.mk23_semi;
+        if (XF_VERBOSE)
+            XF_LOG("mk23 mode mirrored: %s\n",
+                   xf_mode.mk23_semi ? "semi" : "full auto");
+    } else if (w->mz_weapon == MZ_MACHINEGUN) {
         xf_mode.mp5_burst = !xf_mode.mp5_burst;
         if (XF_VERBOSE)
             XF_LOG("mp5 mode mirrored: %s\n",
@@ -563,13 +575,26 @@ void CL_XerpFireCheck(bool attack)
     }
 
     now = cls.realtime;
+    bool follow = false;
+    bool automatic = w->automatic;
+
+    // the mk23's own semi/auto toggle (server default: auto)
+    if (!strcmp(w->name, "mk23") && xf_mode.mk23_semi)
+        automatic = false;
+
     if (xf.last_fire && now - xf.last_fire < w->refire) {
-        if (edge && XF_VERBOSE)
-            XF_LOG("skip: %s refire, %u ms of %u\n",
-                   w->name, now - xf.last_fire, w->refire);
-        return;
+        // paired weapons (akimbo): the second bang rides 100 ms after
+        // the cycle start, inside the refire window
+        if (xf.follow_left > 0 && now - xf.last_fire >= 100 && attack) {
+            follow = true;
+        } else {
+            if (edge && XF_VERBOSE)
+                XF_LOG("skip: %s refire, %u ms of %u\n",
+                       w->name, now - xf.last_fire, w->refire);
+            return;
+        }
     }
-    if (!edge && !w->automatic)
+    if (!follow && !edge && !automatic)
         return;                     // semi-auto needs a fresh click
 
     // 3 round burst: the server fires 3 per trigger pull, mirror that
@@ -596,7 +621,12 @@ void CL_XerpFireCheck(bool attack)
         return;
     }
 
-    xf.last_fire = now;
+    if (follow) {
+        xf.follow_left--;           // cycle timing stays on the first bang
+    } else {
+        xf.last_fire = now;
+        xf.follow_left = w->follow;
+    }
     if (XF_VERBOSE)
         XF_LOG("predicted %s%s\n", w->name, edge ? "" : " (auto)");
 
