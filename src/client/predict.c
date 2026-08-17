@@ -570,95 +570,6 @@ void CL_XerpFireClear(void)
     xf.last_widx = -1;
 }
 
-/*
-Predicted recoil climb, v2 — simulate the server's generator, don't lead
-its output. The server's M4 climb is a known algorithm (machinegun_shots
-x -1.5 pitch, stepped per 100 ms fire frame, rendered lerped). The client
-runs the SAME generator from its predicted shots (S), and reconstructs
-what the server's own copy contributes to the arriving kick (A, from
-acked echoes) to cancel it. Rendered pitch = server_kick - A + S:
-
-- spray start: server kick and A are both still zero, S rises exactly as
-  a classic first kick would — classic onset rate, just at the click;
-- steady spray: A cancels the server's climb, S provides the same ramp
-  shifted one round-trip earlier — classic slope;
-- release: S lerps out at the classic 100 ms pace from the release;
-- damage and fall kicks pass through untouched (A is clamped so it can
-  never subtract more climb than the server kick actually contains).
-
-This is the replacement for the removed additive lead, which could not
-avoid exceeding classic rates while it grew. Regenerating the curve from
-its algorithm has no such term: every piece IS a classic-shaped piece.
-*/
-static struct {
-    int         shots;          // predicted climb steps (mirror of
-                                // machinegun_shots), capped at 23
-    unsigned    step_time;      // when the last step began (100 ms lerp)
-    float       from;           // lerp source value at step_time
-    int         acked;          // echoed shots, for the server-side copy
-    unsigned    ack_time;
-    float       ack_from;
-} xk;
-
-static float xk_lerped(float from, float to, unsigned since)
-{
-    unsigned dt = cls.realtime - since;
-
-    if (dt >= 100)
-        return to;
-    return from + (to - from) * (dt * 0.01f);
-}
-
-// a predicted M4 full-auto shot steps the simulated climb
-static void xk_step(void)
-{
-    xk.from = xk_lerped(xk.from, xk.shots * -1.5f, xk.step_time);
-    if (xk.shots < 23)
-        xk.shots++;
-    xk.step_time = cls.realtime;
-}
-
-// an acked M4 echo steps the reconstruction of the server's copy
-static void xk_ack(void)
-{
-    xk.ack_from = xk_lerped(xk.ack_from, xk.acked * -1.5f, xk.ack_time);
-    if (xk.acked < 23)
-        xk.acked++;
-    xk.ack_time = cls.realtime;
-}
-
-// trigger released: both copies release; the server's own kick will drop
-// a round-trip later and A follows it down via the clamp
-static void xk_release(void)
-{
-    if (!xk.shots && !xk.acked)
-        return;
-    xk.from = xk_lerped(xk.from, xk.shots * -1.5f, xk.step_time);
-    xk.ack_from = xk_lerped(xk.ack_from, xk.acked * -1.5f, xk.ack_time);
-    xk.shots = xk.acked = 0;
-    xk.step_time = xk.ack_time = cls.realtime;
-}
-
-float CL_XerpFireKickPitch(float server_kick_pitch)
-{
-    float S, A;
-
-    if (!cl_xerp_fire->integer || xf_mode.m4_burst)
-        return 0;
-    if (!xk.shots && !xk.acked && !xk.from && !xk.ack_from)
-        return 0;
-
-    S = xk_lerped(xk.from, xk.shots * -1.5f, xk.step_time);
-    A = xk_lerped(xk.ack_from, xk.acked * -1.5f, xk.ack_time);
-
-    // never subtract more climb than the server kick actually contains —
-    // this passes damage/fall kicks through and self-heals count desyncs
-    if (A < server_kick_pitch)
-        A = server_kick_pitch < 0 ? server_kick_pitch : 0;
-
-    return S - A;
-}
-
 // cl_xerp_debug 3: per-render-frame recoil trace while firing (and a short
 // tail after), for A/B comparison of spray smoothness with and without
 // prediction. Records only the recoil components — server kick pitch and
@@ -732,8 +643,6 @@ void CL_XerpFireCheck(bool attack)
     bool edge;
 
     edge = attack && !xf.prev_attack;
-    if (!attack && xf.prev_attack)
-        xk_release();               // recoil sim releases with the trigger
     xf.prev_attack = attack;
     if (edge)
         xf.stream_echoes = 0;
@@ -913,10 +822,6 @@ void CL_XerpFireCheck(bool attack)
         xf.last_fire = now;
         xf.follow_left = w->follow;
     }
-
-    // predicted M4 full-auto shots drive the simulated recoil climb
-    if (w->mz_weapon == MZ_ROCKET && !in_burst)
-        xk_step();
     if (XF_VERBOSE)
         XF_LOG("predicted %s%s\n", w->name, edge ? "" : " (auto)");
 
@@ -980,10 +885,6 @@ bool CL_XerpFireSuppress(void)
             // the echo stream reveals the server's true fire cycle and mode
             xf_learn_cadence(xf.pending[i % XF_PENDING_MAX].widx, now);
             xf.stream_echoes++;
-            // acked M4 shots step the reconstruction of the server's climb
-            if (xf_weapons[xf.pending[i % XF_PENDING_MAX].widx].mz_weapon ==
-                MZ_ROCKET && !xf_mode.m4_burst)
-                xk_ack();
             // consume this and anything older
             xf.tail = i + 1;
             return true;

@@ -142,17 +142,21 @@ own data, and **removed** rather than left as dormant switches:
   classic, for a fundamental reason: a curve you are adding to cannot
   arrive earlier without extra velocity during the shift — read by the
   eye as chop, ripple, or a too-fast onset depending on the disguise.
-  The additive design was removed and replaced by the **generator
-  simulation** that now ships: since the server's climb algorithm is
-  known (shots × −1.5, stepped per fire frame, lerped over 100 ms),
-  the client runs the same generator from predicted shots and cancels
-  the server's arriving copy (reconstructed from acked echoes, clamped
-  to what the kick actually contains so damage/fall kicks pass
-  through). Every rendered piece is then a classic-shaped piece —
-  classic onset, slope, and release, one round-trip earlier. Discrete
-  events can be time-shifted; continuous curves must be *regenerated*.
-  (The per-frame recoil trace, `cl_xerp_debug 3` / `xerpview`, remains
-  the validation instrument.)
+  A second architecture — regenerating the curve from the server's
+  known algorithm (run the climb generator from predicted shots, cancel
+  the server's arriving copy) — is sound in principle and dissolves the
+  velocity constraint, but field traces showed the naive mirror ran at
+  2.2× the server's real climb rate: `machinegun_shots` has gated,
+  stateful dynamics (its effective rate even varied between sessions,
+  likely stance-dependent) that a formula clone does not capture, and
+  recoil is the most feel-sensitive channel in the game, where any
+  approximation is visible. **Recoil is therefore fully server-timed**;
+  a future revival requires an exact, validated replication of the
+  server's climb state machine, not the formula alone. Lessons kept:
+  discrete events can be time-shifted; continuous curves must be
+  regenerated; regeneration demands the true state machine. (The
+  per-frame recoil trace, `cl_xerp_debug 3` / `xerpview`, remains the
+  validation instrument that caught both failures.)
 - **Predicted sniper zoom** (`cl_xerp_zoom`): telemetry showed zoom-in
   confirm times of ~650–700 ms at 15 ms ping — the delay is TNG's
   deliberate server-side weapon-settle window, not the network, and
