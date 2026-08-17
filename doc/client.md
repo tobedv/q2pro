@@ -935,6 +935,11 @@ skipped below 120 ups (so strafe-wiggle isn't amplified), above 2000
 ups (teleport/respawn-sized jumps snap), and on teleport events. While
 enabled the client reports `cl_xerp 0` to the server so `use_xerp`
 servers don't extrapolate on top (the archived cvar is not modified).
+The value is a fractional strength dial: `1` renders a full server
+frame ahead, `0.5` half a frame, and so on — a gradual control between
+stock interpolation and full extrapolation. `cl_xerp_ents_minspeed`
+(default 120 ups) sets the speed below which players are never
+extrapolated.
 Note that the legacy `cl_xerp` cvar only controls server-side xerp and
 is independent of the `cl_xerp_*` family. Caveat: on the rare server
 running `sv_antilag_interp 1` (whose lag compensation already covers

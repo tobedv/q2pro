@@ -1382,7 +1382,7 @@ void CL_SendCvarSync(cvar_t *var)
 
 	// cl_xerp_ents extrapolates locally, so report cl_xerp 0 to the
 	// server — otherwise use_xerp servers would extrapolate on top of us
-	if (cl_xerp_ents->integer && !strcmp(var->name, "cl_xerp"))
+	if (cl_xerp_ents->value > 0 && !strcmp(var->name, "cl_xerp"))
 		Q_strlcpy(val_str, "0", CVARSYNC_MAXSIZE);
 	else
 		Q_strlcpy(val_str, var->string, CVARSYNC_MAXSIZE);
@@ -1441,7 +1441,7 @@ static void CL_ParseCvarSync(void)
 		Com_Printf("CL adding cvarsync: %s, %s\n", cl.cvarsync[i].name, var->string);
 
 		if (strcmp(cl.cvarsync[i].value, var->string) // if value is not default, sync the value
-			|| (cl_xerp_ents->integer && !strcmp(var->name, "cl_xerp")))
+			|| (cl_xerp_ents->value > 0 && !strcmp(var->name, "cl_xerp")))
 			CL_SendCvarSync(var);
 	}
 }

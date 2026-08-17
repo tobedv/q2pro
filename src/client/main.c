@@ -2777,6 +2777,7 @@ static void CL_InitLocal(void)
     cl_predict = Cvar_Get("cl_predict", "1", 0);
     cl_xerp_fire = Cvar_Get("cl_xerp_fire", "0", 0);
     cl_xerp_ents = Cvar_Get("cl_xerp_ents", "0", 0);
+    cl_xerp_ents_minspeed = Cvar_Get("cl_xerp_ents_minspeed", "120", 0);
     cl_xerp_zoom = Cvar_Get("cl_xerp_zoom", "0", 0);
 #ifdef PROTOCOL_VERSION_AQTION_CVARSYNC
     cl_xerp_ents->changed = CL_XerpEntsChanged;

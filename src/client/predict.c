@@ -825,6 +825,7 @@ use_xerp servers don't extrapolate on top of us (double xerp).
 */
 
 cvar_t *cl_xerp_ents;
+cvar_t *cl_xerp_ents_minspeed;
 
 // per-entity record of the position we projected for the next snapshot,
 // so its error against the real position is measurable when it arrives
@@ -879,7 +880,7 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     vec3_t vel, pred;
     float speed, err;
 
-    if (!cl_xerp_ents->integer || cls.demo.playback)
+    if (cl_xerp_ents->value <= 0 || cls.demo.playback)
         return false;
     if (s1->modelindex != MODELINDEX_PLAYER)
         return false;   // players only — grenades/knives stay server-timed
@@ -917,7 +918,7 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
         }
     }
 
-    if (speed < 120) {
+    if (speed < cl_xerp_ents_minspeed->value) {
         xe_stats.slow++;
         xe_hist[s1->number].frame = 0;
         return false;               // low-speed wiggle: don't guess
@@ -938,6 +939,17 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     // to the new data by the end of the interval
     LerpVector(cent->current.origin, pred, cl.lerpfrac, org);
     VectorMA(org, 1.0f - cl.lerpfrac, xe_hist[s1->number].err, org);
+
+    // fractional strength: cl_xerp_ents between 0 and 1 blends between
+    // stock interpolation and the full one-frame-ahead extrapolation, a
+    // gradual dial for tuning how far ahead players are drawn
+    if (cl_xerp_ents->value < 1) {
+        vec3_t stock;
+
+        LerpVector(cent->prev.origin, cent->current.origin,
+                   cl.lerpfrac, stock);
+        LerpVector(stock, org, cl_xerp_ents->value, org);
+    }
 
     xe_stats.players.extrapolated++;
     return true;
