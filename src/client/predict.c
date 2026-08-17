@@ -584,13 +584,19 @@ static struct {
     int         frame;          // cl.frame.number the projection was made on
 } xe_hist[MAX_EDICTS];
 
-// cl_xerp_debug 2: rolling validation stats, one "xerpents" line per window
-static struct {
-    unsigned    start;
+// cl_xerp_debug 2: rolling validation stats, one "xerpents" line per
+// window, players and ballistic projectiles graded separately so the
+// gravity projection can be validated on its own
+typedef struct {
     int         extrapolated;   // entity-frames drawn extrapolated
-    int         slow, jump;     // entity-frames that fell back to interp
     int         checks;         // predictions checked against a real snapshot
     float       err_sum, err_max;
+} xe_class_stats_t;
+
+static struct {
+    unsigned    start;
+    xe_class_stats_t players, proj;
+    int         slow, jump;     // entity-frames that fell back to interp
 } xe_stats;
 
 static void xe_report(void)
@@ -604,12 +610,19 @@ static void xe_report(void)
     if (cls.realtime - xe_stats.start < 5000)
         return;
 
-    Com_Printf("xerpents %u: extrapolated %d, fell back %d slow %d jump, "
-               "pred err avg %.1f max %.1f units (%d checks)\n",
-               cls.realtime, xe_stats.extrapolated,
-               xe_stats.slow, xe_stats.jump,
-               xe_stats.checks ? xe_stats.err_sum / xe_stats.checks : 0,
-               xe_stats.err_max, xe_stats.checks);
+    Com_Printf("xerpents %u: players %d ext, err avg %.1f max %.1f (%d checks); "
+               "proj %d ext, err avg %.1f max %.1f (%d checks); "
+               "fell back %d slow %d jump\n",
+               cls.realtime,
+               xe_stats.players.extrapolated,
+               xe_stats.players.checks ?
+                   xe_stats.players.err_sum / xe_stats.players.checks : 0,
+               xe_stats.players.err_max, xe_stats.players.checks,
+               xe_stats.proj.extrapolated,
+               xe_stats.proj.checks ?
+                   xe_stats.proj.err_sum / xe_stats.proj.checks : 0,
+               xe_stats.proj.err_max, xe_stats.proj.checks,
+               xe_stats.slow, xe_stats.jump);
 
     memset(&xe_stats, 0, sizeof(xe_stats));
     xe_stats.start = cls.realtime;
@@ -649,13 +662,15 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     if (cl.frame.number != xe_hist[s1->number].frame) {
         if (xe_hist[s1->number].frame &&
             cl.frame.number == xe_hist[s1->number].frame + 1) {
+            xe_class_stats_t *cs = proj ? &xe_stats.proj : &xe_stats.players;
+
             VectorSubtract(xe_hist[s1->number].pred, cent->current.origin,
                            xe_hist[s1->number].err);
             err = VectorLength(xe_hist[s1->number].err);
-            xe_stats.err_sum += err;
-            if (err > xe_stats.err_max)
-                xe_stats.err_max = err;
-            xe_stats.checks++;
+            cs->err_sum += err;
+            if (err > cs->err_max)
+                cs->err_max = err;
+            cs->checks++;
             if (err > 48)           // too wrong to smooth: snap
                 VectorClear(xe_hist[s1->number].err);
         } else {
@@ -687,7 +702,10 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     LerpVector(cent->current.origin, pred, cl.lerpfrac, org);
     VectorMA(org, 1.0f - cl.lerpfrac, xe_hist[s1->number].err, org);
 
-    xe_stats.extrapolated++;
+    if (proj)
+        xe_stats.proj.extrapolated++;
+    else
+        xe_stats.players.extrapolated++;
     return true;
 }
 
@@ -806,8 +824,19 @@ float CL_XerpZoomFov(float fov)
 
     // hand off once the server's fov catches up; give up if it never does
     // (zoom refused: bandaging, weapon dropped, ...)
-    if (fabsf(cl.frame.ps.fov - xz_mode_fov(xz.mode)) < 2 ||
-        cls.realtime - xz.time > 1500) {
+    if (fabsf(cl.frame.ps.fov - xz_mode_fov(xz.mode)) < 2) {
+        if (SCR_XerpDebugLevel() >= 2)
+            Com_Printf("xerpzoom %u: confirmed %dx after %u ms\n",
+                       cls.realtime, xz.mode, cls.realtime - xz.time);
+        xz.mode = 0;
+        return fov;
+    }
+    if (cls.realtime - xz.time > 1500) {
+        if (SCR_XerpDebugLevel() >= 2)
+            Com_Printf("xerpzoom %u: REVERTED %dx after %u ms "
+                       "(server fov %.0f) - mirror mispredicted?\n",
+                       cls.realtime, xz.mode, cls.realtime - xz.time,
+                       cl.frame.ps.fov);
         xz.mode = 0;
         return fov;
     }
