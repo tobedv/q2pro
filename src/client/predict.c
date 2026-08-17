@@ -974,10 +974,21 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
         }
     }
 
-    if (speed < cl_xerp_ents_minspeed->value) {
-        xe_stats.slow++;
-        xe_hist[s1->number].frame = 0;
-        return false;               // low-speed wiggle: don't guess
+    // speed damping is a ramp, not a cliff: full extrapolation at minspeed,
+    // fading to none at half of it. A hard cutoff made every abrupt stop
+    // (bots especially) pop back from the extrapolated lead in one step —
+    // the "floating" artifact. With the ramp, decelerating players shed
+    // their lead gradually.
+    float minspeed = cl_xerp_ents_minspeed->value;
+    float speed_scale = 1.0f;
+
+    if (minspeed > 0 && speed < minspeed) {
+        speed_scale = (speed - minspeed * 0.5f) / (minspeed * 0.5f);
+        if (speed_scale <= 0) {
+            xe_stats.slow++;
+            xe_hist[s1->number].frame = 0;
+            return false;           // genuinely stationary: don't guess
+        }
     }
     if (speed > 2000) {
         xe_stats.jump++;
@@ -996,15 +1007,15 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     LerpVector(cent->current.origin, pred, cl.lerpfrac, org);
     VectorMA(org, 1.0f - cl.lerpfrac, xe_hist[s1->number].err, org);
 
-    // fractional strength: cl_xerp_ents between 0 and 1 blends between
-    // stock interpolation and the full one-frame-ahead extrapolation, a
-    // gradual dial for tuning how far ahead players are drawn
-    if (cl_xerp_ents->value < 1) {
+    // fractional strength: the cl_xerp_ents dial (0..1) times the speed
+    // ramp blends between stock interpolation and full extrapolation
+    float scale = cl_xerp_ents->value * speed_scale;
+    if (scale < 1) {
         vec3_t stock;
 
         LerpVector(cent->prev.origin, cent->current.origin,
                    cl.lerpfrac, stock);
-        LerpVector(stock, org, cl_xerp_ents->value, org);
+        LerpVector(stock, org, scale > 0 ? scale : 0, org);
     }
 
     xe_stats.players.extrapolated++;
