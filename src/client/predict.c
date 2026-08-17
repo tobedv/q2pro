@@ -634,6 +634,23 @@ float CL_XerpFireKickPitch(void)
     return cur;
 }
 
+// cl_xerp_debug 3: per-render-frame recoil trace while firing (and a short
+// tail after), for A/B comparison of spray smoothness with and without
+// prediction. Records only the recoil components — server kick pitch and
+// the predicted lead — so mouse movement never pollutes the trace.
+void CL_XerpViewTrace(float server_kick_pitch, float pred_pitch)
+{
+    if (SCR_XerpDebugLevel() < 3)
+        return;
+    if (!xf.prev_attack &&
+        (!xf.last_fire || cls.realtime - xf.last_fire > 300))
+        return;
+
+    CL_XerpLog("xerpview %u: kick %.3f pred %.3f sum %.3f\n",
+               cls.realtime, server_kick_pitch, pred_pitch,
+               server_kick_pitch + pred_pitch);
+}
+
 // TNG blocks all firing during the round-start countdown, signalled only
 // by its centerprints — hold predictions through "LIGHTS.../CAMERA..."
 // and release on "ACTION!". The strings have been stable since the 90s;
