@@ -1368,6 +1368,24 @@ bool CL_XerpFireSuppress(void)
             return true;
         }
     }
+    // class-based absorption: if this weapon class was predicted within the
+    // echo window, an unpaired own echo is a desynced twin of a bang the
+    // player already heard (pendings aged out mid-stream, raise-hold hiccup)
+    // — field report: overlapping "double M4" streams in duels. Absorb it;
+    // the predicted rhythm IS the stream. Echoes outside any predicted
+    // stream (silencer, knife, cold shots) still play normally.
+    if (xf.last_fire && now - xf.last_fire <= XF_ECHO_WINDOW) {
+        const xf_weapon_t *held = xf_find_weapon(false);
+
+        if (held && (held->mz_weapon == mz.weapon ||
+                     mz.weapon == MZ_MACHINEGUN)) {
+            if (XF_VERBOSE)
+                XF_LOG("echo absorbed unpaired (mz %d) - desynced twin\n",
+                       mz.weapon);
+            return true;
+        }
+    }
+
     if (XF_VERBOSE)
         XF_LOG("own fire NOT predicted (mz %d%s) - full round-trip delay\n",
                mz.weapon, mz.silenced ? ", silenced" : "");
@@ -1506,8 +1524,16 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
             ts = 0;
             if (ol > 1 && nl > 1)
                 ts = DotProduct(vel, xe_hist[s1->number].vel) / (ol * nl);
-            if (ts < 0)
-                ts = 0;
+            // dead zone: ordinary running carries direction noise
+            // (dot 0.7-0.95) which must not modulate the lead — field
+            // report: the raw scale pulsed the lead ~20% at 10 Hz and
+            // read as chop. Full lead at dot >= 0.7, fading below.
+            ts = ts <= 0 ? 0 : (ts >= 0.7f ? 1.0f : ts * (1.0f / 0.7f));
+            // asymmetric in time: a reversal cuts the lead immediately
+            // (safety), but recovery is gradual so re-engagement glides
+            if (ts >= xe_hist[s1->number].ts_to)
+                ts = xe_hist[s1->number].ts_to +
+                     (ts - xe_hist[s1->number].ts_to) * 0.35f;
             xe_hist[s1->number].ts_from = xe_hist[s1->number].ts_to;
             xe_hist[s1->number].ts_to = ts;
         } else {
