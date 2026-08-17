@@ -926,6 +926,12 @@ skipped below 120 ups (so strafe-wiggle isn't amplified), above 2000
 ups (teleport/respawn-sized jumps snap), and on teleport events. While
 enabled the client reports `cl_xerp 0` to the server so `use_xerp`
 servers don't extrapolate on top (the archived cvar is not modified).
+Note that the legacy `cl_xerp` cvar only controls server-side xerp and
+is independent of the `cl_xerp_*` family. Caveat: on the rare server
+running `sv_antilag_interp 1` (whose lag compensation already covers
+interpolation delay), extrapolation over-leads the hit rewind — server
+xerp auto-disables there, but the client cannot see that cvar, so
+disable `cl_xerp_ents` manually on such servers.
 With `cl_xerp_debug 2`, a `xerpents` line is logged every 5 seconds:
 how many entity-frames were extrapolated vs fell back, and the
 prediction error (average/max distance in units between the projected
