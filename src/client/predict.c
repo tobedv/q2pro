@@ -616,6 +616,14 @@ skews A by up to one game frame.
 #define XKA_RING    8       // received-frame history; misses read as 0
 #define XKA_CAP     23      // machinegun_shots cap (p_weapon.c)
 
+#if USE_FPS
+#define XKA_OLDKEY_NUM  cl.oldkeyframe.number
+#define XKA_KEY_NUM     cl.keyframe.number
+#else
+#define XKA_OLDKEY_NUM  cl.oldframe.number
+#define XKA_KEY_NUM     cl.frame.number
+#endif
+
 static struct {
     int         shots;              // mirrored machinegun_shots
     int         last_fire_frame;    // newest frame that carried an own M4 flash
@@ -694,6 +702,80 @@ static void xka_end_spray(const char *why)
     xka.residue_flagged = false;
 }
 
+/*
+Impulse kicks (M3 and handcannon) — same A/S architecture as the climb,
+simpler machine. Server (M3_Fire / HC_Fire): kick_angles[0] = -2, fixed,
+for the one think that fires; the next think's no-fire path clears it.
+The client therefore receives one -2 frame (exact under OFFSET2CHAR:
+-2 * 4 = -8, no truncation loss) and renders a 200 ms triangle: lerp up
+over the frame carrying the kick, lerp down over the next. Flash-coupled:
+the same packet carries the MZ_SHOTGUN / MZ_SSHOTGUN event (these codes
+are NOT collapsed by llsound 0 servers).
+
+A mirrors the triangle from own flashes on the received-frame ring; S
+plays the identical triangle from the predicted shot time. Refire cycles
+(M3 ~900 ms, HC ~1500 ms) dwarf the 200 ms shape, so impulses never
+overlap and a single slot per side suffices. Unmodeled server bumps
+(e.g. a possible second -2 on the M3's pump think, which carries no
+flash) are deliberately NOT mirrored — they pass through classic-timed
+like damage kicks. Self-heal: a predicted impulse completes in 200 ms
+unconditionally; a wrong one costs one classic-shaped triangle, the
+same bound as a phantom bang.
+*/
+
+#define XKI_PITCH   (-2.0f)
+
+static struct {
+    int         frames[XKA_RING];   // received-frame ring, like xka
+    float       values[XKA_RING];
+    unsigned    gen_time;           // predicted impulse start, 0 = idle
+    unsigned    flash_time;         // last real impulse flash, for lead log
+} xki;
+
+static void xki_set(int frame, float value)
+{
+    xki.frames[frame & (XKA_RING - 1)] = frame;
+    xki.values[frame & (XKA_RING - 1)] = value;
+}
+
+static float xki_get(int frame)
+{
+    if (xki.frames[frame & (XKA_RING - 1)] != frame)
+        return 0.0f;
+    return xki.values[frame & (XKA_RING - 1)];
+}
+
+static float xki_lerped(float lerp)
+{
+    float from = xki_get(XKA_OLDKEY_NUM);
+    float to = xki_get(XKA_KEY_NUM);
+
+    return from + (to - from) * lerp;
+}
+
+// the 200 ms triangle the client renders for a single -2 kick frame
+static float xki_triangle(unsigned since, unsigned now)
+{
+    unsigned dt;
+
+    if (!since)
+        return 0.0f;
+    dt = now - since;
+    if (dt < 100)
+        return XKI_PITCH * (dt * 0.01f);
+    if (dt < 200)
+        return XKI_PITCH * ((200 - dt) * 0.01f);
+    return 0.0f;
+}
+
+// a predicted M3/HC shot starts the generator triangle at the click
+static void CL_XerpKickImpulse(void)
+{
+    xki.gen_time = cls.realtime;
+    if (SCR_XerpDebugLevel() == 3)
+        CL_XerpLog("xerpkick %u: impulse gen start\n", cls.realtime);
+}
+
 // raw own-entity muzzle flash, called for every svc_muzzleflash before (and
 // regardless of) prediction-echo consumption
 void CL_XerpKickEcho(void)
@@ -704,6 +786,21 @@ void CL_XerpKickEcho(void)
         return;                     // demo playback is fine and wanted
     if (mz.entity != cl.frame.clientNum + 1)
         return;                     // someone else's flash
+
+    // M3 / handcannon: one fixed -2 impulse rides the frame that carries
+    // this flash (these MZ codes are never collapsed by llsound 0)
+    if (mz.weapon == MZ_SHOTGUN || mz.weapon == MZ_SSHOTGUN) {
+        xki_set(cl.frame.number, XKI_PITCH);
+        xki.flash_time = cls.realtime;
+        if (SCR_XerpDebugLevel() >= 2 && xki.gen_time &&
+            cls.realtime - xki.gen_time < 1000)
+            CL_XerpLog("xerpkick %u: impulse %s lead %u ms\n",
+                       cls.realtime,
+                       mz.weapon == MZ_SHOTGUN ? "m3" : "hc",
+                       cls.realtime - xki.gen_time);
+        return;
+    }
+
     if (mz.weapon != MZ_ROCKET) {
         // llsound 0 servers collapse hitscan flashes to MZ_MACHINEGUN;
         // only the held-weapon mirror can tell the M4 from the MP5 then
@@ -756,6 +853,8 @@ void CL_XerpKickFrame(void)
 {
     int n = cl.frame.number;
 
+    xki_set(n, 0.0f);   // impulse frames default 0; a flash overwrites
+
     if (xka.shots && n - xka.last_fire_frame > CL_FRAMEDIV)
         xka_end_spray("no flash for a full think interval");
     if (!xka.shots) {
@@ -770,13 +869,6 @@ void CL_XerpKickFrame(void)
 
 // the mirror's value for the render frame, same frame pair and lerp
 // fraction as the kick render in CL_SetupFirstPersonView
-#if USE_FPS
-#define XKA_OLDKEY_NUM  cl.oldkeyframe.number
-#define XKA_KEY_NUM     cl.keyframe.number
-#else
-#define XKA_OLDKEY_NUM  cl.oldframe.number
-#define XKA_KEY_NUM     cl.frame.number
-#endif
 
 static float xka_lerped(float lerp)
 {
@@ -933,6 +1025,11 @@ float CL_XerpKickDelta(float lerp, float kick_pitch)
     }
     S = xkg_value(now);
 
+    // impulse kicks (M3/HC) ride the same channel: same subtraction,
+    // same gating, folded into the trace's ack/gen columns
+    A += xki_lerped(lerp);
+    S += xki_triangle(xki.gen_time, now);
+
     if (cl_xerp_fire->integer && !cls.demo.playback)
         delta = S - A;
 
@@ -953,6 +1050,7 @@ void CL_XerpFireClear(void)
     xf.last_widx = -1;
     memset(&xka, 0, sizeof(xka));
     memset(&xkg, 0, sizeof(xkg));
+    memset(&xki, 0, sizeof(xki));
 }
 
 // TNG blocks all firing during the round-start countdown, signalled only
@@ -1198,6 +1296,10 @@ void CL_XerpFireCheck(bool attack)
 
     // (the recoil generator steps at render time from echoed + in-flight
     // counts — the pending push below is what raises its target)
+
+    // M3/handcannon: the fixed -2 impulse kick starts at the click
+    if (w->mz_weapon == MZ_SHOTGUN || w->mz_weapon == MZ_SSHOTGUN)
+        CL_XerpKickImpulse();
     if (XF_VERBOSE)
         XF_LOG("predicted %s%s\n", w->name, edge ? "" : " (auto)");
 
