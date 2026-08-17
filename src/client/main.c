@@ -347,12 +347,9 @@ bool CL_ForwardToServer(void)
     }
 
     // "weapon" cycles sniper zoom, "lens" presets it; the fire predictor
-    // mirrors the server's zoom-busy window off these, and the zoom
-    // predictor applies the fov change locally
-    if (!Q_stricmp(cmd, "weapon") || !Q_stricmp(cmd, "lens")) {
+    // mirrors the server's zoom-busy window off these
+    if (!Q_stricmp(cmd, "weapon") || !Q_stricmp(cmd, "lens"))
         CL_XerpFireZoomChanged();
-        CL_XerpZoomCommand(cmd, Cmd_Argv(1));
-    }
     if (!Q_stricmp(cmd, "weapon"))
         CL_XerpFireModeToggle();
 
@@ -2778,7 +2775,6 @@ static void CL_InitLocal(void)
     cl_xerp_fire = Cvar_Get("cl_xerp_fire", "0", 0);
     cl_xerp_ents = Cvar_Get("cl_xerp_ents", "0", 0);
     cl_xerp_ents_minspeed = Cvar_Get("cl_xerp_ents_minspeed", "120", 0);
-    cl_xerp_zoom = Cvar_Get("cl_xerp_zoom", "0", 0);
 #ifdef PROTOCOL_VERSION_AQTION_CVARSYNC
     cl_xerp_ents->changed = CL_XerpEntsChanged;
 #endif

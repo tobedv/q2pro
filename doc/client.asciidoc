@@ -519,11 +519,9 @@ cl_xerp_fire::
     Default value is 0.
 
 cl_xerp_zoom::
-    Experimental, keep 0: zoom-in delay is dominated by a deliberate
-    ~600 ms server-side weapon settle, not the network, and predicting
-    the fov desyncs it from the server-driven scope overlay. Retained
-    for experimentation at very high ping. "xerpzoom" telemetry logs
-    outcomes. Default value is 0 (recommended).
+    Removed. Predicted sniper zoom was invalidated by field data: the
+    zoom-in delay is a deliberate ~600 ms server-side weapon settle,
+    not network latency.
 
 cl_xerp_ents::
     Client-side extrapolation of remote players (grenades and knives

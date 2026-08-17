@@ -294,7 +294,6 @@ static void set_active_state(void)
     SCR_XerpDebugClear();
     CL_XerpFireClear();
     CL_XerpEntsClear();
-    CL_XerpZoomClear();
     Con_Close(false);           // get rid of connection screen
 
     CL_CheckForPause();
@@ -1495,7 +1494,6 @@ void CL_CalcViewValues(void)
 
     // interpolate field of view
     cl.fov_x = lerp_client_fov(ops->fov, ps->fov, lerp);
-    cl.fov_x = CL_XerpZoomFov(cl.fov_x);    // predicted sniper zoom
     cl.fov_y = V_CalcFov(cl.fov_x, 4, 3);
 
     AngleVectors(cl.refdef.viewangles, cl.v_forward, cl.v_right, cl.v_up);

@@ -551,7 +551,6 @@ extern cvar_t   *cl_predict_crouch;
 extern cvar_t   *cl_xerp_fire;
 extern cvar_t   *cl_xerp_ents;
 extern cvar_t   *cl_xerp_ents_minspeed;
-extern cvar_t   *cl_xerp_zoom;
 extern cvar_t   *cl_footsteps;
 extern cvar_t   *cl_noskins;
 extern cvar_t   *cl_kickangles;
@@ -880,9 +879,6 @@ void CL_XerpFireModeToggle(void);
 bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org);
 void CL_XerpEntsChanged(cvar_t *self);
 void CL_XerpEntsClear(void);
-void CL_XerpZoomCommand(const char *cmd, const char *args);
-float CL_XerpZoomFov(float fov);
-void CL_XerpZoomClear(void);
 void CL_XerpLog(const char *fmt, ...) q_printf(1, 2);
 void CL_Trace(trace_t *tr, const vec3_t start, const vec3_t end, const vec3_t mins, const vec3_t maxs, int contentmask);
 
