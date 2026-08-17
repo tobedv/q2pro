@@ -1398,6 +1398,9 @@ cvar_t *cl_xerp_ents_minspeed;
 // so its error against the real position is measurable when it arrives
 static struct {
     vec3_t      pred;
+    vec3_t      vel;            // last snapshot's per-frame displacement,
+                                // for velocity-consistency scaling
+    float       ts_from, ts_to; // turn scale pair, lerped across the frame
     vec3_t      err;            // last projection's error, decayed into the
                                 // render so corrections never snap
     int         frame;          // cl.frame.number the projection was made on
@@ -1478,6 +1481,7 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
         if (xe_hist[s1->number].frame &&
             cl.frame.number == xe_hist[s1->number].frame + 1) {
             xe_class_stats_t *cs = &xe_stats.players;
+            float ts, ol, nl;
 
             VectorSubtract(xe_hist[s1->number].pred, cent->current.origin,
                            xe_hist[s1->number].err);
@@ -1488,9 +1492,29 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
             cs->checks++;
             if (err > 48)           // too wrong to smooth: snap
                 VectorClear(xe_hist[s1->number].err);
+
+            // velocity-consistency (turn) scale: prediction's enemy is not
+            // speed but velocity CHANGE. Human strafe-dancing is rhythmic
+            // reversal — the maximally wrong case — while a rushing or
+            // peeking player is fast AND predictable. Scale the lead by
+            // the agreement between consecutive snapshot velocities: full
+            // on consistent movement, zero on reversals. Continuous by
+            // nature (a dot product), lerped across the frame like every
+            // other rendered value, so it introduces no transition pops.
+            ol = VectorLength(xe_hist[s1->number].vel);
+            nl = VectorLength(vel);
+            ts = 0;
+            if (ol > 1 && nl > 1)
+                ts = DotProduct(vel, xe_hist[s1->number].vel) / (ol * nl);
+            if (ts < 0)
+                ts = 0;
+            xe_hist[s1->number].ts_from = xe_hist[s1->number].ts_to;
+            xe_hist[s1->number].ts_to = ts;
         } else {
             VectorClear(xe_hist[s1->number].err);
+            xe_hist[s1->number].ts_from = xe_hist[s1->number].ts_to = 1;
         }
+        VectorCopy(vel, xe_hist[s1->number].vel);
     }
 
     // speed damping is a ramp, not a cliff: full extrapolation at minspeed,
@@ -1522,7 +1546,11 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
 
     // fractional strength: the cl_xerp_ents dial (0..1) times the speed
     // ramp blends between stock interpolation and full extrapolation
-    float scale = cl_xerp_ents->value * speed_scale;
+    // turn scale lerped across the frame like the position itself
+    float turn_scale = xe_hist[s1->number].ts_from +
+        (xe_hist[s1->number].ts_to - xe_hist[s1->number].ts_from) *
+        cl.lerpfrac;
+    float scale = cl_xerp_ents->value * speed_scale * turn_scale;
     if (scale < 1) {
         vec3_t stock;
 
