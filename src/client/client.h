@@ -549,6 +549,7 @@ extern cvar_t   *cl_gun_z;
 extern cvar_t   *cl_predict;
 extern cvar_t   *cl_predict_crouch;
 extern cvar_t   *cl_xerp_fire;
+extern cvar_t   *cl_xerp_fire_cut;
 extern cvar_t   *cl_xerp_ents;
 extern cvar_t   *cl_xerp_ents_minspeed;
 extern cvar_t   *cl_footsteps;

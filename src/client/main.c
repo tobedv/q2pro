@@ -2773,6 +2773,7 @@ static void CL_InitLocal(void)
     cl_noskins->changed = cl_noskins_changed;
     cl_predict = Cvar_Get("cl_predict", "1", 0);
     cl_xerp_fire = Cvar_Get("cl_xerp_fire", "0", 0);
+    cl_xerp_fire_cut = Cvar_Get("cl_xerp_fire_cut", "1", 0);
     cl_xerp_ents = Cvar_Get("cl_xerp_ents", "0", 0);
     cl_xerp_ents_minspeed = Cvar_Get("cl_xerp_ents_minspeed", "120", 0);
 #ifdef PROTOCOL_VERSION_AQTION_CVARSYNC

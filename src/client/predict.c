@@ -321,6 +321,7 @@ remain fully server-authoritative — this cannot create or remove a hit.
 */
 
 cvar_t *cl_xerp_fire;
+cvar_t *cl_xerp_fire_cut;
 
 // All xerp telemetry is written to its own file, logs/xerp.log, instead of
 // the console — full per-shot data without drowning out chat and game
@@ -360,6 +361,68 @@ void CL_XerpLog(const char *fmt, ...)
 
 // cl_xerp_fire 2: log every fire decision to logs/xerp.log
 #define XF_VERBOSE  (cl_xerp_fire->integer >= 2)
+
+static float xf_echo_latency;   // EWMA of measured click-to-echo ms
+
+/*
+The cut dial (cl_xerp_fire_cut, 0..1): how much of the measured echo
+latency the predicted bang cuts away. 1 = instant at the click (full
+cut); 0.5 = the bang plays at half the round-trip; 0 = full
+echo-equivalent timing — but always on the LOCAL clock, so even low
+settings render an evenly-paced stream instead of jittery echo
+arrivals. Field-motivated: a lifetime of muscle memory is calibrated
+to the old delay, and the dial lets players walk the earliness in
+gradually, exactly like cl_xerp_ents does for extrapolation.
+*/
+#define XF_BANG_MAX 8
+
+static struct {
+    unsigned    due;
+    int         mz_weapon;
+} xf_bangs[XF_BANG_MAX];
+
+static void xf_bang_play(int mz_weapon)
+{
+    mz.entity = cl.frame.clientNum + 1;
+    mz.weapon = mz_weapon;
+    mz.silenced = false;
+    CL_MuzzleFlash();
+}
+
+static void xf_bang_schedule(int mz_weapon)
+{
+    float cut = Cvar_ClampValue(cl_xerp_fire_cut, 0, 1);
+    unsigned delay = (unsigned)((1.0f - cut) * xf_echo_latency);
+    unsigned i;
+
+    if (delay < 5) {
+        xf_bang_play(mz_weapon);
+        return;
+    }
+    if (delay > 250)
+        delay = 250;
+    for (i = 0; i < XF_BANG_MAX; i++) {
+        if (!xf_bangs[i].due) {
+            xf_bangs[i].due = cls.realtime + delay;
+            xf_bangs[i].mz_weapon = mz_weapon;
+            return;
+        }
+    }
+    xf_bang_play(mz_weapon);        // queue full: play now, never drop
+}
+
+// serviced every client frame, before any gating
+static void xf_bang_service(void)
+{
+    unsigned i;
+
+    for (i = 0; i < XF_BANG_MAX; i++) {
+        if (xf_bangs[i].due && cls.realtime >= xf_bangs[i].due) {
+            xf_bangs[i].due = 0;
+            xf_bang_play(xf_bangs[i].mz_weapon);
+        }
+    }
+}
 
 #define XF_LOG(fmt, ...) \
     CL_XerpLog("xerpfire %u: " fmt, cls.realtime, ##__VA_ARGS__)
@@ -537,7 +600,6 @@ static struct {
 // (echoes at 200+ ms) don't get their streams falsely paused.
 #define XF_ECHO_STALE_MIN   350
 
-static float xf_echo_latency;   // EWMA of measured click-to-echo ms
 
 static unsigned xf_echo_stale(void)
 {
@@ -1051,6 +1113,7 @@ void CL_XerpFireClear(void)
     memset(&xka, 0, sizeof(xka));
     memset(&xkg, 0, sizeof(xkg));
     memset(&xki, 0, sizeof(xki));
+    memset(xf_bangs, 0, sizeof(xf_bangs));
 }
 
 /*
@@ -1170,6 +1233,8 @@ void CL_XerpFireCheck(bool attack)
     player_state_t *ps = &cl.frame.ps;
     unsigned now;
     bool edge;
+
+    xf_bang_service();
 
     edge = attack && !xf.prev_attack;
     if (!attack && xf.prev_attack)
@@ -1374,11 +1439,9 @@ void CL_XerpFireCheck(bool attack)
     xf.pending[xf.head % XF_PENDING_MAX].widx = (int)(w - xf_weapons);
     xf.head++;
 
-    // synthesize exactly what the server echo would have produced
-    mz.entity = cl.frame.clientNum + 1;
-    mz.weapon = w->mz_weapon;
-    mz.silenced = false;
-    CL_MuzzleFlash();
+    // synthesize exactly what the server echo would have produced —
+    // scheduled per the cut dial (cl_xerp_fire_cut 1 = instant)
+    xf_bang_schedule(w->mz_weapon);
 }
 
 // called for each incoming svc_muzzleflash; true = already played locally
