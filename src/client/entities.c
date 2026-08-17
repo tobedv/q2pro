@@ -398,7 +398,6 @@ void CL_DeltaFrame(void)
 
     cl.servertime = framenum * CL_FRAMETIME;
     SCR_XerpDebugSample();
-    CL_XerpBufferSnapshot();
 #if USE_FPS
     cl.keyservertime = (framenum / cl.frametime.div) * BASE_FRAMETIME;
 #endif

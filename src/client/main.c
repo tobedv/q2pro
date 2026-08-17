@@ -25,7 +25,6 @@ cvar_t  *cl_noskins;
 cvar_t  *cl_footsteps;
 cvar_t  *cl_timeout;
 cvar_t  *cl_predict;
-cvar_t  *cl_xerp_buffer;
 cvar_t  *cl_predict_crouch;
 cvar_t  *cl_gun;
 cvar_t  *cl_gunalpha;
@@ -2772,7 +2771,6 @@ static void CL_InitLocal(void)
     cl_noskins->changed = cl_noskins_changed;
     cl_predict = Cvar_Get("cl_predict", "1", 0);
     cl_xerp_fire = Cvar_Get("cl_xerp_fire", "0", 0);
-    cl_xerp_buffer = Cvar_Get("cl_xerp_buffer", "0", 0);
     cl_xerp_ents = Cvar_Get("cl_xerp_ents", "0", 0);
 #ifdef PROTOCOL_VERSION_AQTION_CVARSYNC
     cl_xerp_ents->changed = CL_XerpEntsChanged;
@@ -3007,29 +3005,21 @@ void CL_Activate(active_t active)
 }
 
 /*
-cl_xerp_buffer: adaptive interpolation buffer (Phase 3 of the cl_xerp_*
-netcode feel features). cl.time normally sits at a phase-random 0-100 ms
-behind the newest snapshot, decided by connect timing — that offset is pure
-added delay on everything you see, including kill confirmation. When
-enabled, cl.time is slewed (max 2 ms per render frame, never snapped)
-toward riding [value + 3x measured snapshot jitter] ms behind the newest
-snapshot. If we ever starve (run past the newest snapshot), extra margin is
-kept for a few seconds before creeping back in.
+cl_xerp_debug 2: rolling window of what the render clock actually does.
+Field data note: an "adaptive interpolation buffer" (steering cl.time to
+hold a margin behind the newest snapshot) was built and then removed —
+telemetry showed the two-snapshot window cannot hold a positive margin
+(it is low-clamped away at every snapshot arrival, i.e. 10 Hz
+time-skips), and the stock clamps already self-stabilize at the minimal
+interpolation delay (~half a server frame average). Doing better needs a
+third-snapshot renderer. These stats remain: they proved that once and
+still catch timing anomalies.
 */
-static unsigned xb_starve_until;
-static int      xb_target;          // last computed target, for the stats log
-static int      xb_correction;      // ms of cl.time correction left to apply
-
-// cl_xerp_debug 2: rolling window of what the render clock actually did —
-// the data to validate the buffer against, not just eyeball it
 static struct {
     unsigned    start;
     int         frames;
     int         delay_sum, delay_min, delay_max;
     int         hi_clamps, lo_clamps;
-    int         starves;
-    int         snaps;
-    int         margin_sum, margin_min, margin_max;
 } xb_stats;
 
 #define XB_STATS_WINDOW 5000    // ms per summary line
@@ -3055,87 +3045,16 @@ static void CL_TimeBufferStats(int delay, int hi_clamp, int lo_clamp)
     if (cls.realtime - xb_stats.start < XB_STATS_WINDOW)
         return;
 
-    Com_Printf("xerpbuf %u: margin avg %d min %d max %d ms (%d snaps), "
-               "target %d (buffer %d, jitter %.1f), "
-               "delay avg %d min %d max %d ms, "
-               "clamps hi %d lo %d, starves %d, frames %d\n",
+    Com_Printf("xerpbuf %u: delay avg %d min %d max %d ms, "
+               "clamps hi %d lo %d, jitter %.1f, frames %d\n",
                cls.realtime,
-               xb_stats.snaps ? xb_stats.margin_sum / xb_stats.snaps : -1,
-               xb_stats.margin_min, xb_stats.margin_max, xb_stats.snaps,
-               cl_xerp_buffer->integer > 0 ? xb_target : -1,
-               cl_xerp_buffer->integer, SCR_XerpJitter(),
                xb_stats.delay_sum / xb_stats.frames,
                xb_stats.delay_min, xb_stats.delay_max,
                xb_stats.hi_clamps, xb_stats.lo_clamps,
-               xb_stats.starves, xb_stats.frames);
+               SCR_XerpJitter(), xb_stats.frames);
 
     memset(&xb_stats, 0, sizeof(xb_stats));
     xb_stats.start = cls.realtime;
-}
-
-// called from CL_DeltaFrame when a new snapshot arrives — the only moment
-// the buffer phase is observable. `margin` is how many ms of data were
-// still unrendered when fresh data came in; steering happens here, once
-// per snapshot, and CL_AdjustTimeBuffer spreads the correction out.
-void CL_XerpBufferSnapshot(void)
-{
-    int margin, target;
-
-    if (cl_xerp_buffer->integer <= 0 || cls.demo.playback ||
-        cls.state != ca_active)
-        return;
-
-    target = cl_xerp_buffer->integer + (int)(3 * SCR_XerpJitter());
-    if (cls.realtime < xb_starve_until)
-        target += 30;
-    xb_target = target;
-    if (target >= CL_FRAMETIME) {
-        xb_correction = 0;
-        return;                     // no room to gain anything
-    }
-
-    // servertime was just advanced by one frame; the high clamp pins
-    // cl.time at the previous servertime, so margin ~0 means we starved
-    margin = cl.servertime - CL_FRAMETIME - cl.time;
-
-    if (SCR_XerpDebugLevel() >= 2) {
-        if (!xb_stats.snaps || margin < xb_stats.margin_min)
-            xb_stats.margin_min = margin;
-        if (!xb_stats.snaps || margin > xb_stats.margin_max)
-            xb_stats.margin_max = margin;
-        xb_stats.margin_sum += margin;
-        xb_stats.snaps++;
-    }
-
-    if (margin < 1) {
-        if (cls.realtime >= xb_starve_until && SCR_XerpDebugLevel() >= 2)
-            Com_Printf("xerpbuf %u: STARVED (margin %d ms), "
-                       "holding +30 ms for 3 s\n", cls.realtime, margin);
-        xb_stats.starves++;
-        xb_starve_until = cls.realtime + 3000;
-        target += 30;
-    }
-
-    // + = we had excess buffer, advance cl.time; − = too tight, retard it
-    xb_correction = margin - target;
-}
-
-// per render frame: bleed the pending correction in gently, never snapping
-static void CL_AdjustTimeBuffer(void)
-{
-    int step;
-
-    if (cl_xerp_buffer->integer <= 0 || cls.demo.playback)
-        return;
-    if (!xb_correction)
-        return;
-
-    step = Q_clip(xb_correction, -2, 2);
-    cl.time += step;
-#if USE_FPS
-    cl.keytime += step;
-#endif
-    xb_correction -= step;
 }
 
 static void CL_SetClientTime(void)
@@ -3151,8 +3070,6 @@ static void CL_SetClientTime(void)
 #endif
         return;
     }
-
-    CL_AdjustTimeBuffer();
 
     prevtime = cl.servertime - CL_FRAMETIME;
     if (cl.time > cl.servertime) {

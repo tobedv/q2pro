@@ -529,12 +529,11 @@ cl_xerp_ents::
     seconds. Inactive during demo playback. Default value is 0.
 
 cl_xerp_buffer::
-    Experimental, keep 0: telemetry invalidated the premise. The
-    two-snapshot interpolation window cannot hold a positive margin —
-    it is low-clamped away at every snapshot arrival, producing 10 Hz
-    time-skips — and the engine's clamps already self-stabilize at the
-    minimum interpolation delay. Retained for experimentation only.
-    Default value is 0 (disabled — recommended).
+    Removed. An adaptive interpolation buffer was invalidated by field
+    telemetry: the two-snapshot window cannot hold a positive margin
+    (low-clamped away every arrival as 10 Hz time-skips) and the stock
+    clamps already ride the minimal interpolation delay. The "xerpbuf"
+    render-clock telemetry under cl_xerp_debug 2 remains.
 
 scr_chathud::
     Toggles drawing of the last chat lines on the screen. Default value is 0.
