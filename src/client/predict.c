@@ -1059,10 +1059,20 @@ void CL_XerpFireClear(void)
 // if they ever change, the echo-cancel and watchdog still bound the cost.
 void CL_XerpFireLCA(const char *s)
 {
-    if (!strncmp(s, "LIGHTS", 6) || !strncmp(s, "CAMERA", 6)) {
-        xf.raise_until = cls.realtime + 1600;
+    // server phase timing (a_team.c): countdown 43 -> CAMERA at 23 ->
+    // ACTION at 3, i.e. 2000 ms between phases at 10 Hz. Each hold must
+    // bridge to the NEXT phase with margin — the previous 1600 ms holds
+    // left a 400 ms firing window after each centerprint (field bug:
+    // shots triggered before ACTION). LIGHTS bridges all the way to
+    // ACTION in case CAMERA's print is lost.
+    if (!strncmp(s, "LIGHTS", 6)) {
+        xf.raise_until = cls.realtime + 4600;
         if (XF_VERBOSE)
-            XF_LOG("round countdown - holding fire\n");
+            XF_LOG("round countdown (lights) - holding fire\n");
+    } else if (!strncmp(s, "CAMERA", 6)) {
+        xf.raise_until = cls.realtime + 2600;
+        if (XF_VERBOSE)
+            XF_LOG("round countdown (camera) - holding fire\n");
     } else if (!strncmp(s, "ACTION", 6)) {
         xf.raise_until = 0;
         if (XF_VERBOSE)
