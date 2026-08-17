@@ -878,6 +878,10 @@ playback. Default value is 0.
     `cl_xerp_buffer` settings.
 
 ### cl\_xerp\_fire  
+See `doc/xerp.md` for the conceptual overview of the whole
+`cl_xerp_*` family (what is predicted, what is server-authoritative,
+and how it relates to the legacy `cl_xerp`/`use_xerp` server xerp).
+
 Predicted local weapon fire feedback: when enabled, the muzzle flash and
 fire sound for your own shots play the instant the attack input is
 sampled, instead of after the server round-trip. The server's echoed
