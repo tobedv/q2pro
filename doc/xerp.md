@@ -163,10 +163,17 @@ own data, and **removed** rather than left as dormant switches:
   one think). What ships in this build is **phase A, passive**: an
   echo-driven reconstruction that steps on raw own-entity M4 flashes,
   renders nothing, and logs `|kick − A|` per render frame
-  (`cl_xerp_debug 3`: `xerpview ... res` + `xerpkick` decisions).
-  Prediction may only be revived by driving this same machine from
-  predicted shots after field residuals hold ~0 across sessions and
-  stances. Lessons kept: discrete events can be time-shifted;
+  (`cl_xerp_debug 3`: `xerpview ... res` + `xerpkick` decisions; grade
+  with `tools/xerpkick-residual.py`). On a local 10 Hz listen server
+  (real game DLL, automated runs) the mirror measured **100.0% exact —
+  zero residual on every render frame** across full mags with dry-fire
+  tails, tap sprays with sub-think release blips, burst mode (correctly
+  flat), and moving/crouched mags. Still open before phase B: the same
+  bar under real network conditions (EU: jitter, loss, and the
+  framediv > 1 sound-grid deferral on 20/30 Hz servers), plus
+  movement/damage contamination magnitudes from real play. Prediction
+  may only be revived by driving this same machine from predicted
+  shots after field residuals hold ~0 across sessions and stances. Lessons kept: discrete events can be time-shifted;
   continuous curves must be *regenerated*; regeneration demands the
   true state machine, proven passively before it touches the screen.
 - **Predicted sniper zoom** (`cl_xerp_zoom`): telemetry showed zoom-in
