@@ -620,10 +620,12 @@ float CL_XerpFireKickPitch(void)
     if (!last || now - last > 400) {
         cur = target;
     } else {
-        // ease in on spray start; classic snap-back pace (~one server
-        // frame) on release — the prediction shifts classic behavior
-        // earlier in time, it never changes its shape
-        float tc = fabsf(target) > fabsf(cur) ? 30 : 100;
+        // the lead must never MOVE faster than classic moves: the server
+        // lerps each kick over a full 100 ms frame, so ease in and release
+        // at that same pace (a 30 ms ease-in read as a jolt at spray start
+        // — field feel report). With the constant-lead design there is no
+        // ripple to mask, so one symmetric classic-pace constant suffices.
+        float tc = 100;
 
         frac = (now - last) * (1.0f / tc);
         if (frac > 1)
