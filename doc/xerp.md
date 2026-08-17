@@ -146,17 +146,29 @@ own data, and **removed** rather than left as dormant switches:
   known algorithm (run the climb generator from predicted shots, cancel
   the server's arriving copy) — is sound in principle and dissolves the
   velocity constraint, but field traces showed the naive mirror ran at
-  2.2× the server's real climb rate: `machinegun_shots` has gated,
-  stateful dynamics (its effective rate even varied between sessions,
-  likely stance-dependent) that a formula clone does not capture, and
-  recoil is the most feel-sensitive channel in the game, where any
-  approximation is visible. **Recoil is therefore fully server-timed**;
-  a future revival requires an exact, validated replication of the
-  server's climb state machine, not the formula alone. Lessons kept:
-  discrete events can be time-shifted; continuous curves must be
-  regenerated; regeneration demands the true state machine. (The
-  per-frame recoil trace, `cl_xerp_debug 3` / `xerpview`, remains the
-  validation instrument that caught both failures.)
+  2.2× the server's real climb rate, and its ack-side reconstruction
+  tracked at roughly half. Both had mechanical causes, found by reading
+  the game source against the traces: the M4's real formula is
+  `machinegun_shots * -0.7` (p_weapon.c M4_Fire) — the `-1.5` the
+  mirror used belongs to mk23/mp5 dead code a few functions up
+  (1.5 / 0.7 = 2.14 ≈ the 2.2× overshoot; 23 × 0.7 = the observed −16
+  cap) — and the ack stepper counted *consumed prediction echoes*,
+  whose "consume this and anything older" batching swallows shots.
+  **Recoil still renders fully server-timed.** The true machine is now
+  documented in predict.c (climb mirror section) and its value model is
+  verified against the recorded baseline traces to the quarter-degree,
+  wire quantization included (the client receives
+  `trunc(shots × -2.8) / 4`: 0.5°/0.75° alternating stairs, first step
+  −0.50, cap exactly −16.00, one 100 ms think per step, release to 0 in
+  one think). What ships in this build is **phase A, passive**: an
+  echo-driven reconstruction that steps on raw own-entity M4 flashes,
+  renders nothing, and logs `|kick − A|` per render frame
+  (`cl_xerp_debug 3`: `xerpview ... res` + `xerpkick` decisions).
+  Prediction may only be revived by driving this same machine from
+  predicted shots after field residuals hold ~0 across sessions and
+  stances. Lessons kept: discrete events can be time-shifted;
+  continuous curves must be *regenerated*; regeneration demands the
+  true state machine, proven passively before it touches the screen.
 - **Predicted sniper zoom** (`cl_xerp_zoom`): telemetry showed zoom-in
   confirm times of ~650–700 ms at 15 ms ping — the delay is TNG's
   deliberate server-side weapon-settle window, not the network, and
@@ -182,6 +194,6 @@ regression shows up in the same place.
 | `cl_xerp_fire` | 0 / 1 / 2 | instant own-fire feedback; 2 adds per-shot logging |
 | `cl_xerp_ents` | 0.0 – 1.0 | player extrapolation strength dial |
 | `cl_xerp_ents_minspeed` | ups, default 120 | speed floor below which players interpolate normally |
-| `cl_xerp_debug` | 0 / 1 / 2 | off / overlay / overlay + `logs/xerp.log` telemetry |
+| `cl_xerp_debug` | 0 / 1 / 2 / 3 | off / overlay / + `logs/xerp.log` telemetry / + per-frame recoil trace |
 
 See `doc/client.md` for the full per-cvar reference.

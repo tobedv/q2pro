@@ -1560,6 +1560,7 @@ void CL_ParseServerMessage(void)
 
 		case svc_muzzleflash:
 			CL_ParseMuzzleFlashPacket(MZ_SILENCED);
+			CL_XerpKickEcho();      // recoil mirror counts raw own flashes
 			if (!CL_XerpFireSuppress())
 				CL_MuzzleFlash();
 			break;

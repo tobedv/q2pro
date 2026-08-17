@@ -564,27 +564,201 @@ void CL_XerpFireZoomChanged(void)
     }
 }
 
+/*
+Recoil climb mirror, phase A (passive) — reconstruct the server's M4 climb
+from the echo stream alone, render nothing, and prove the reconstruction
+against the server's own kick channel at every render frame before any of
+it is allowed to drive prediction. cl_xerp_debug 3 logs the per-frame
+residual ("xerpview ... res") and every mirror decision ("xerpkick") to
+logs/xerp.log.
+
+The machine being mirrored (aq2-tng p_weapon.c M4_Fire + p_client.c
+ClientThinkWeaponIfReady, source-derived and validated against the
+2026-08-17 field traces — see doc/xerp.md):
+
+- one weapon think per 100 ms (framediv game frames) while the trigger is
+  held, re-anchored at the first think of each pull, which the attack-edge
+  path can start on ANY game frame;
+- each think that fires full-auto: machinegun_shots = min(shots + 1, 23),
+  kick pitch = shots * -0.7 (NOT the -1.5 of the mk23/mp5 dead code that
+  sank the v2 generator; 23 * -0.7 is the observed -16 cap). Burst mode
+  forces shots = 0 and climbs nothing;
+- any think that does NOT fire — release, empty mag, reload, weapon
+  switch, bandage — clears kick_angles first, so the ps pitch drops to 0
+  in ONE think, and every such path also ends the spray;
+- the wire packs the channel with OFFSET2CHAR: char = clip8(trunc(v * 4)),
+  so the client actually receives trunc(shots * -2.8) / 4 — alternating
+  0.5/0.75 degree stairs, exactly -16.0 at the cap;
+- every fired shot multicasts one svc_muzzleflash (MZ_ROCKET on llsound 1
+  servers, collapsed to MZ_MACHINEGUN on llsound 0) written to the SAME
+  packet as the frame whose ps carries the new step; servers with
+  framediv > 1 and sync_guns >= 1 can defer the event onto the global
+  sound grid, up to framediv-1 frames late.
+
+The mirror therefore steps once per raw own-entity M4 muzzleflash — NOT
+per consumed prediction echo, whose "consume this and anything older"
+batching under-counted the v2 reconstruction to half rate — and assigns
+the wire-quantized value to the frame the event arrived with. A received
+frame without a fire event values 0 when a think was due (framediv 1:
+exact server semantics) or holds mid-interval (framediv > 1), and a full
+think interval with no event ends the spray. Rendered A lerps between
+per-frame values with the same frame pair and fraction the kick render
+uses, so a correct mirror makes |kick - A| == 0 whenever nothing else
+(damage kick, fall kick, run_pitch/bob while moving) rides the channel.
+
+Known divergence classes to count in the field, all bounded, none
+rendered: a lost packet swallows frame and flash together (the mirror
+resets and restarts low; the server kept climbing), a stale burst-mode
+mirror skips or adds at most 3 steps, framediv > 1 sound-grid deferral
+skews A by up to one game frame.
+*/
+
+#define XKA_RING    8       // received-frame history; misses read as 0
+#define XKA_CAP     23      // machinegun_shots cap (p_weapon.c)
+
+static struct {
+    int         shots;              // mirrored machinegun_shots
+    int         last_fire_frame;    // newest frame that carried an own M4 flash
+    unsigned    last_fire_time;     // realtime of that flash, for trace gating
+    unsigned    spray_start;        // realtime of the spray's first step
+    int         steps;              // fired steps this spray (past the cap too)
+    int         frames[XKA_RING];   // ring: frame number ...
+    float       values[XKA_RING];   // ... and that frame's climb pitch
+} xka;
+
+// the wire's OFFSET2CHAR quantization (msg.c): trunc toward zero, clip, /4
+static float xka_quantize(float v)
+{
+    return Q_clip_int8((int)(v * 4)) * 0.25f;
+}
+
+static float xka_cur(void)
+{
+    return xka.shots ? xka_quantize(xka.shots * -0.7f) : 0.0f;
+}
+
+static void xka_set(int frame, float value)
+{
+    xka.frames[frame & (XKA_RING - 1)] = frame;
+    xka.values[frame & (XKA_RING - 1)] = value;
+}
+
+static float xka_get(int frame)
+{
+    if (xka.frames[frame & (XKA_RING - 1)] != frame)
+        return 0.0f;
+    return xka.values[frame & (XKA_RING - 1)];
+}
+
+static void xka_end_spray(const char *why)
+{
+    if (SCR_XerpDebugLevel() >= 3)
+        CL_XerpLog("xerpkick %u: spray ended - %d steps, %.2f deep, %u ms (%s)\n",
+                   cls.realtime, xka.steps, xka_cur(),
+                   cls.realtime - xka.spray_start, why);
+    xka.shots = 0;
+    xka.steps = 0;
+}
+
+// raw own-entity muzzle flash, called for every svc_muzzleflash before (and
+// regardless of) prediction-echo consumption
+void CL_XerpKickEcho(void)
+{
+    const xf_weapon_t *w;
+
+    if (cls.state != ca_active)
+        return;                     // demo playback is fine and wanted
+    if (mz.entity != cl.frame.clientNum + 1)
+        return;                     // someone else's flash
+    if (mz.weapon != MZ_ROCKET) {
+        // llsound 0 servers collapse hitscan flashes to MZ_MACHINEGUN;
+        // only the held-weapon mirror can tell the M4 from the MP5 then
+        if (mz.weapon != MZ_MACHINEGUN)
+            return;
+        w = xf_find_weapon(false);
+        if (!w || w->mz_weapon != MZ_ROCKET)
+            return;
+    }
+    if (xf_mode.m4_burst)
+        return;                     // burst mode climbs nothing
+
+    if (!xka.shots) {
+        xka.spray_start = cls.realtime;
+        xka.steps = 0;
+    }
+    if (xka.shots < XKA_CAP)
+        xka.shots++;
+    xka.steps++;
+    xka.last_fire_frame = cl.frame.number;
+    xka.last_fire_time = cls.realtime;
+    xka_set(cl.frame.number, xka_cur());
+    if (SCR_XerpDebugLevel() >= 3)
+        CL_XerpLog("xerpkick %u: step %d -> %.2f (frame %d)\n",
+                   cls.realtime, xka.shots, xka_cur(), cl.frame.number);
+}
+
+// once per received server frame, from CL_DeltaFrame — the flash for this
+// frame's fire think, if any, parses later in the same packet and overwrites
+void CL_XerpKickFrame(void)
+{
+    int n = cl.frame.number;
+
+    if (xka.shots && n - xka.last_fire_frame > CL_FRAMEDIV)
+        xka_end_spray("no flash for a full think interval");
+    if (!xka.shots) {
+        xka_set(n, 0.0f);
+        return;
+    }
+    if (CL_FRAMEDIV == 1 && n > xka.last_fire_frame)
+        xka_set(n, 0.0f);           // think frame: 0 unless this packet steps it
+    else
+        xka_set(n, xka_cur());      // between thinks the server's kick persists
+}
+
+// the mirror's value for the render frame, same frame pair and lerp
+// fraction as the kick render in CL_SetupFirstPersonView
+#if USE_FPS
+#define XKA_OLDKEY_NUM  cl.oldkeyframe.number
+#define XKA_KEY_NUM     cl.keyframe.number
+#else
+#define XKA_OLDKEY_NUM  cl.oldframe.number
+#define XKA_KEY_NUM     cl.frame.number
+#endif
+
+float CL_XerpKickMirror(float lerp)
+{
+    float from = xka_get(XKA_OLDKEY_NUM);
+    float to = xka_get(XKA_KEY_NUM);
+
+    return from + (to - from) * lerp;
+}
+
 void CL_XerpFireClear(void)
 {
     memset(&xf, 0, sizeof(xf));
     xf.last_widx = -1;
+    memset(&xka, 0, sizeof(xka));
 }
 
 // cl_xerp_debug 3: per-render-frame recoil trace while firing (and a short
 // tail after), for A/B comparison of spray smoothness with and without
 // prediction. Records only the recoil components — server kick pitch and
-// the predicted lead — so mouse movement never pollutes the trace.
-void CL_XerpViewTrace(float server_kick_pitch, float pred_pitch)
+// the passive mirror — so mouse movement never pollutes the trace. The
+// mirror-activity gate keeps the trace alive in demo playback and baseline
+// (cl_xerp_fire 0) runs, where no local attack state exists.
+void CL_XerpViewTrace(float server_kick_pitch, float mirror_pitch)
 {
     if (SCR_XerpDebugLevel() < 3)
         return;
     if (!xf.prev_attack &&
-        (!xf.last_fire || cls.realtime - xf.last_fire > 300))
+        (!xf.last_fire || cls.realtime - xf.last_fire > 300) &&
+        !xka.shots &&
+        (!xka.last_fire_time || cls.realtime - xka.last_fire_time > 500))
         return;
 
-    CL_XerpLog("xerpview %u: kick %.3f pred %.3f sum %.3f\n",
-               cls.realtime, server_kick_pitch, pred_pitch,
-               server_kick_pitch + pred_pitch);
+    CL_XerpLog("xerpview %u: kick %.3f ack %.3f res %.3f\n",
+               cls.realtime, server_kick_pitch, mirror_pitch,
+               server_kick_pitch - mirror_pitch);
 }
 
 // TNG blocks all firing during the round-start countdown, signalled only

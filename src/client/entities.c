@@ -398,6 +398,7 @@ void CL_DeltaFrame(void)
 
     cl.servertime = framenum * CL_FRAMETIME;
     SCR_XerpDebugSample();
+    CL_XerpKickFrame();     // recoil mirror: value this frame (flash may follow)
 #if USE_FPS
     cl.keyservertime = (framenum / cl.frametime.div) * BASE_FRAMETIME;
 #endif
@@ -1253,7 +1254,9 @@ static void CL_SetupFirstPersonView(void)
         lerp = CL_KEYLERPFRAC;
 
         LerpAngles(ops->kick_angles, ps->kick_angles, lerp, kickangles);
-        CL_XerpViewTrace(kickangles[PITCH], 0);     // recoil trace (debug 3)
+        // recoil trace (debug 3): server kick vs the passive mirror —
+        // nothing from the mirror is rendered
+        CL_XerpViewTrace(kickangles[PITCH], CL_XerpKickMirror(lerp));
         VectorAdd(cl.refdef.viewangles, kickangles, cl.refdef.viewangles);
     }
 
