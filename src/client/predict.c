@@ -700,11 +700,12 @@ void CL_XerpFireCheck(bool attack)
     if ((w->mz_weapon == MZ_MACHINEGUN && xf_mode.mp5_burst) ||
         (w->mz_weapon == MZ_ROCKET && xf_mode.m4_burst)) {
         if (edge) {
-            // the server needs its burst + recovery frame cycle (~700 ms)
-            // before the next burst can start
-            if (xf.burst_start && now - xf.burst_start < 700) {
+            // the server needs its burst + recovery cycle before the next
+            // burst can start — 550 ms measured from field echoes (the
+            // server accepted re-clicks at 553+ ms that 700 was skipping)
+            if (xf.burst_start && now - xf.burst_start < 550) {
                 if (XF_VERBOSE)
-                    XF_LOG("skip: burst recovery, %u ms of 700\n",
+                    XF_LOG("skip: burst recovery, %u ms of 550\n",
                            now - xf.burst_start);
                 return;
             }
@@ -778,6 +779,15 @@ bool CL_XerpFireSuppress(void)
         return false;               // someone else's flash
 
     now = cls.realtime;
+
+    // an own-fire echo during a raise hold proves the server can already
+    // fire — the hold was a false positive (or the raise ended early), so
+    // cancel it instead of suppressing predictions for the full window
+    if (xf.raise_until && now < xf.raise_until) {
+        xf.raise_until = 0;
+        if (XF_VERBOSE)
+            XF_LOG("raise hold canceled - server is firing\n");
+    }
     while (xf.tail != xf.head &&
            now - xf.pending[xf.tail % XF_PENDING_MAX].time > XF_ECHO_WINDOW) {
         if (XF_VERBOSE)
