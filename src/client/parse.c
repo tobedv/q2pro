@@ -1214,6 +1214,7 @@ static void CL_ParseCenterPrint(void)
     MSG_ReadString(s, sizeof(s));
     SHOWNET(3, "    \"%s\"\n", Com_MakePrintable(s));
     SCR_CenterPrint(s, false);
+    CL_XerpFireLCA(s);
 
     if (!cls.demo.playback && cl.serverstate != ss_broadcast) {
         COM_strclr(s);

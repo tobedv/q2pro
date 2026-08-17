@@ -876,6 +876,7 @@ void CL_XerpFireCheck(bool attack);
 bool CL_XerpFireSuppress(void);
 void CL_XerpFireZoomChanged(void);
 void CL_XerpFireModeToggle(void);
+void CL_XerpFireLCA(const char *s);
 bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org);
 void CL_XerpEntsChanged(cvar_t *self);
 void CL_XerpEntsClear(void);

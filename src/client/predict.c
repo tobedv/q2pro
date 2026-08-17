@@ -388,7 +388,7 @@ static const xf_weapon_t xf_weapons[] = {
     { "w_super90", "v_shotg",  "m3",     MZ_SHOTGUN,      900, false, 0 },
     { "w_cannon",  "v_cannon", "hc",     MZ_SSHOTGUN,    1500, false, 0 },
     { "w_akimbo",  "v_dual",   "akimbo", MZ_BLASTER,      400, true,  1 },
-    { "w_sniper",  "v_sniper", "ssg",    MZ_HYPERBLASTER, 1300, false, 0 },
+    { "w_sniper",  "v_sniper", "ssg",    MZ_HYPERBLASTER, 1400, false, 0 },
     // The SSG's FIRE is predicted (field-validated, including zoomed shots
     // once the zoom-busy window has passed); zoom-visual prediction was
     // tried, invalidated by field data, and removed.
@@ -547,6 +547,23 @@ void CL_XerpFireClear(void)
     xf.last_widx = -1;
 }
 
+// TNG blocks all firing during the round-start countdown, signalled only
+// by its centerprints — hold predictions through "LIGHTS.../CAMERA..."
+// and release on "ACTION!". The strings have been stable since the 90s;
+// if they ever change, the echo-cancel and watchdog still bound the cost.
+void CL_XerpFireLCA(const char *s)
+{
+    if (!strncmp(s, "LIGHTS", 6) || !strncmp(s, "CAMERA", 6)) {
+        xf.raise_until = cls.realtime + 1600;
+        if (XF_VERBOSE)
+            XF_LOG("round countdown - holding fire\n");
+    } else if (!strncmp(s, "ACTION", 6)) {
+        xf.raise_until = 0;
+        if (XF_VERBOSE)
+            XF_LOG("round live - fire released\n");
+    }
+}
+
 // the "weapon" command while holding the MP5/M4 toggles the server's
 // persistent fire mode — mirror it so burst mode isn't over-predicted
 void CL_XerpFireModeToggle(void)
@@ -699,6 +716,14 @@ void CL_XerpFireCheck(bool attack)
 
     if ((w->mz_weapon == MZ_MACHINEGUN && xf_mode.mp5_burst) ||
         (w->mz_weapon == MZ_ROCKET && xf_mode.m4_burst)) {
+        // the server auto-repeats bursts while the trigger is held (ready
+        // state + attack starts a new burst after recovery) — mirror that,
+        // or held-through bursts play as late echoes and the rhythm mixes
+        if (!edge && xf.burst_left <= 0 && xf.burst_start &&
+            now - xf.burst_start >= 550) {
+            xf.burst_left = 3;
+            xf.burst_start = now;
+        }
         if (edge) {
             // the server needs its burst + recovery cycle before the next
             // burst can start — 550 ms measured from field echoes (the
