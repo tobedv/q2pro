@@ -511,8 +511,8 @@ cl_xerp_fire::
     the server round-trip; the echoed server muzzle flash is consumed so
     nothing plays twice. Fire effects only — hit detection and damage
     remain fully server-authoritative. Predicts MK23, akimbo, MP5, M4,
-    M3, handcannon and the SSG (except for 700 ms after a zoom change);
-    knife, grenades and silenced shots keep standard behavior. Value 2 additionally logs every fire decision and
+    M3 and handcannon; the SSG, knife, grenades and silenced shots keep
+    standard server-driven behavior. Value 2 additionally logs every fire decision and
     per-shot click-to-echo latency to the console (persist with
     "logfile 2"). Inactive during demo playback and spectating.
     Default value is 0.
@@ -525,8 +525,8 @@ cl_xerp_zoom::
     outcomes. Default value is 0 (recommended).
 
 cl_xerp_ents::
-    Client-side extrapolation of remote players, thrown grenades and
-    throwing knives (ballistic projection with gravity): shifts the
+    Client-side extrapolation of remote players (grenades and knives
+    stay server-timed — exact position beats freshness): shifts the
     interpolation window one server frame forward (newest snapshot to
     its velocity projection), the same visual effect server-side xerp
     produces, computed locally. Purely visual. Skipped below 120 ups,

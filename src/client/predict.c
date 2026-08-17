@@ -388,10 +388,9 @@ static const xf_weapon_t xf_weapons[] = {
     { "w_super90", "v_shotg",  "m3",     MZ_SHOTGUN,      900, false, 0 },
     { "w_cannon",  "v_cannon", "hc",     MZ_SSHOTGUN,    1500, false, 0 },
     { "w_akimbo",  "v_dual",   "akimbo", MZ_BLASTER,      400, true,  1 },
-    { "w_sniper",  "v_sniper", "ssg",    MZ_HYPERBLASTER, 1300, false, 0 },
-    // absent on purpose: knife, grenade — those keep today's server-echo
-    // behavior. The sniper is predicted except during its zoom-busy window
-    // (see CL_XerpFireZoomChanged).
+    // absent on purpose: the SSG (rarely used, and its zoom state machine
+    // makes prediction fragile — field decision to keep it server-driven),
+    // knife and grenades — those keep today's server-echo behavior
 };
 
 // identify the held weapon: primary source is the own player entity's vwep
@@ -863,17 +862,12 @@ static void xe_report(void)
         return;
 
     CL_XerpLog("xerpents %u: players %d ext, err avg %.1f max %.1f (%d checks); "
-               "proj %d ext, err avg %.1f max %.1f (%d checks); "
                "fell back %d slow %d jump\n",
                cls.realtime,
                xe_stats.players.extrapolated,
                xe_stats.players.checks ?
                    xe_stats.players.err_sum / xe_stats.players.checks : 0,
                xe_stats.players.err_max, xe_stats.players.checks,
-               xe_stats.proj.extrapolated,
-               xe_stats.proj.checks ?
-                   xe_stats.proj.err_sum / xe_stats.proj.checks : 0,
-               xe_stats.proj.err_max, xe_stats.proj.checks,
                xe_stats.slow, xe_stats.jump);
 
     memset(&xe_stats, 0, sizeof(xe_stats));
@@ -885,19 +879,12 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     vec3_t vel, pred;
     float speed, err;
 
-    bool proj = false;
-
     if (!cl_xerp_ents->integer || cls.demo.playback)
         return false;
-    if (s1->modelindex != MODELINDEX_PLAYER) {
-        // thrown grenades and knives are ballistic and extrapolate well;
-        // everything else keeps plain interpolation
-        const char *m = cl.configstrings[cl.csr.models + s1->modelindex];
-        if (strstr(m, "grenade2") || strstr(m, "objects/knife"))
-            proj = true;
-        else
-            return false;
-    }
+    if (s1->modelindex != MODELINDEX_PLAYER)
+        return false;   // players only — grenades/knives stay server-timed
+                        // by field decision: their exact position (bounces,
+                        // landing spot) matters more than freshness
     if (s1->event == EV_PLAYER_TELEPORT)
         return false;
 
@@ -914,7 +901,7 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     if (cl.frame.number != xe_hist[s1->number].frame) {
         if (xe_hist[s1->number].frame &&
             cl.frame.number == xe_hist[s1->number].frame + 1) {
-            xe_class_stats_t *cs = proj ? &xe_stats.proj : &xe_stats.players;
+            xe_class_stats_t *cs = &xe_stats.players;
 
             VectorSubtract(xe_hist[s1->number].pred, cent->current.origin,
                            xe_hist[s1->number].err);
@@ -942,8 +929,6 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     }
 
     VectorAdd(cent->current.origin, vel, pred);
-    if (proj)
-        pred[2] -= 8;               // one server frame of gravity (800 ups^2)
 
     VectorCopy(pred, xe_hist[s1->number].pred);
     xe_hist[s1->number].frame = cl.frame.number;
@@ -954,10 +939,7 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     LerpVector(cent->current.origin, pred, cl.lerpfrac, org);
     VectorMA(org, 1.0f - cl.lerpfrac, xe_hist[s1->number].err, org);
 
-    if (proj)
-        xe_stats.proj.extrapolated++;
-    else
-        xe_stats.players.extrapolated++;
+    xe_stats.players.extrapolated++;
     return true;
 }
 

@@ -884,9 +884,9 @@ sampled, instead of after the server round-trip. The server's echoed
 muzzle flash is recognized and consumed so nothing plays twice. Fire
 effects only — bullets, hit detection, blood and damage remain fully
 server-authoritative, so this cannot create or remove a hit. Predicted
-weapons: MK23, akimbo pistols, MP5, M4, M3 shotgun, handcannon, and the
-SSG sniper rifle (except for 700 ms after a zoom change, mirroring the
-server's zoom-busy window). The MP5/M4 fire-mode toggle (`weapon`
+weapons: MK23, akimbo pistols, MP5, M4, M3 shotgun, and handcannon. The
+SSG sniper rifle is deliberately not predicted (rarely used, and its
+zoom state machine makes prediction fragile). The MP5/M4 fire-mode toggle (`weapon`
 command, full auto vs 3 round burst) is mirrored so burst mode predicts
 3 shots per trigger pull (with the server's ~700 ms burst recovery
 respected between pulls), and the MK23's semi/auto toggle likewise.
@@ -922,8 +922,9 @@ ping where the round-trip share is meaningful. Default value is 0
 (recommended).
 
 ### cl\_xerp\_ents  
-Client-side extrapolation of remote players, thrown grenades and
-throwing knives. Instead of interpolating
+Client-side extrapolation of remote players. Thrown grenades and
+knives deliberately stay server-timed: their exact position (bounces,
+landing spot) matters more than freshness. Instead of interpolating
 between the two most recent server snapshots (rendering up to a full
 server frame in the past), the interpolation window is shifted one
 frame forward: players render between the newest snapshot and its
