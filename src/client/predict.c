@@ -446,13 +446,62 @@ static struct {
     unsigned    zoom_busy_until;    // sniper: mirrors the server's WEAPON_BUSY
                                     // window after a zoom change
     int         burst_left;         // shots remaining in a 3RB trigger pull
+    unsigned    burst_start;        // when the current burst began
     int         follow_left;        // paired shots left in this fire cycle
     struct {
         unsigned    time;
         int         mz_weapon;
+        int         widx;           // xf_weapons index, for cadence learning
     } pending[XF_PENDING_MAX];
     unsigned    head, tail;     // pending ring, head > tail
 } xf;
+
+// live cadence calibration: the server's echo stream reveals its true fire
+// cycle per weapon, so the table refire values act only as priors. Learning
+// is asymmetric — intervals shorter than the estimate pull it down fast
+// (they prove the server can fire that fast), longer ones only drift it up
+// slowly and only within a sane band around the prior (slow clicking and
+// lag spikes must not corrupt the estimate). Persists across map changes;
+// the echo watchdog remains the backstop if an estimate ever goes wrong.
+static struct {
+    float       cycle;          // learned ms between shots, 0 = use prior
+    unsigned    last_echo;
+    int         samples;
+} xf_cad[q_countof(xf_weapons)];
+
+static int xf_cycle(const xf_weapon_t *w)
+{
+    int widx = (int)(w - xf_weapons);
+
+    if (xf_cad[widx].cycle)
+        return (int)xf_cad[widx].cycle;
+    return w->refire;
+}
+
+static void xf_learn_cadence(int widx, unsigned now)
+{
+    const xf_weapon_t *w = &xf_weapons[widx];
+    float interval, old;
+
+    if (xf_cad[widx].last_echo) {
+        interval = now - xf_cad[widx].last_echo;
+        // band-pass around the prior: rejects akimbo's 100 ms pair gaps,
+        // slow-click gaps and lag bursts
+        if (interval >= w->refire * 0.6f && interval <= w->refire * 1.6f) {
+            old = xf_cad[widx].cycle ? xf_cad[widx].cycle : w->refire;
+            if (interval < old)
+                xf_cad[widx].cycle = old * 0.5f + interval * 0.5f;
+            else
+                xf_cad[widx].cycle = old * 0.95f + interval * 0.05f;
+            xf_cad[widx].samples++;
+            if (XF_VERBOSE && fabsf(xf_cad[widx].cycle - old) >= 5)
+                XF_LOG("%s cadence calibrated: %d -> %d ms (n=%d)\n",
+                       w->name, (int)old, (int)xf_cad[widx].cycle,
+                       xf_cad[widx].samples);
+        }
+    }
+    xf_cad[widx].last_echo = now;
+}
 
 // the server's persistent MP5/M4 fire mode (full auto vs 3 round burst),
 // toggled by the "weapon" command while holding that gun; deliberately NOT
@@ -582,15 +631,15 @@ void CL_XerpFireCheck(bool attack)
     if (!strcmp(w->name, "mk23") && xf_mode.mk23_semi)
         automatic = false;
 
-    if (xf.last_fire && now - xf.last_fire < w->refire) {
+    if (xf.last_fire && now - xf.last_fire < xf_cycle(w)) {
         // paired weapons (akimbo): the second bang rides 100 ms after
         // the cycle start, inside the refire window
         if (xf.follow_left > 0 && now - xf.last_fire >= 100 && attack) {
             follow = true;
         } else {
             if (edge && XF_VERBOSE)
-                XF_LOG("skip: %s refire, %u ms of %u\n",
-                       w->name, now - xf.last_fire, w->refire);
+                XF_LOG("skip: %s refire, %u ms of %d\n",
+                       w->name, now - xf.last_fire, xf_cycle(w));
             return;
         }
     }
@@ -600,8 +649,18 @@ void CL_XerpFireCheck(bool attack)
     // 3 round burst: the server fires 3 per trigger pull, mirror that
     if ((w->mz_weapon == MZ_MACHINEGUN && xf_mode.mp5_burst) ||
         (w->mz_weapon == MZ_ROCKET && xf_mode.m4_burst)) {
-        if (edge)
+        if (edge) {
+            // the server needs its burst + recovery frame cycle (~700 ms)
+            // before the next burst can start
+            if (xf.burst_start && now - xf.burst_start < 700) {
+                if (XF_VERBOSE)
+                    XF_LOG("skip: burst recovery, %u ms of 700\n",
+                           now - xf.burst_start);
+                return;
+            }
             xf.burst_left = 3;
+            xf.burst_start = now;
+        }
         if (xf.burst_left <= 0) {
             if (edge && XF_VERBOSE)
                 XF_LOG("skip: burst spent, release trigger\n");
@@ -635,6 +694,7 @@ void CL_XerpFireCheck(bool attack)
         xf.tail++;
     xf.pending[xf.head % XF_PENDING_MAX].time = now;
     xf.pending[xf.head % XF_PENDING_MAX].mz_weapon = w->mz_weapon;
+    xf.pending[xf.head % XF_PENDING_MAX].widx = (int)(w - xf_weapons);
     xf.head++;
 
     // synthesize exactly what the server echo would have produced
@@ -672,6 +732,8 @@ bool CL_XerpFireSuppress(void)
             if (XF_VERBOSE)
                 XF_LOG("echo consumed, click-to-echo %u ms (mz %d)\n",
                        now - xf.pending[i % XF_PENDING_MAX].time, mz.weapon);
+            // the echo stream reveals the server's true fire cycle
+            xf_learn_cadence(xf.pending[i % XF_PENDING_MAX].widx, now);
             // consume this and anything older
             xf.tail = i + 1;
             return true;

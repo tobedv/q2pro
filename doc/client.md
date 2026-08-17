@@ -888,9 +888,14 @@ weapons: MK23, akimbo pistols, MP5, M4, M3 shotgun, handcannon, and the
 SSG sniper rifle (except for 700 ms after a zoom change, mirroring the
 server's zoom-busy window). The MP5/M4 fire-mode toggle (`weapon`
 command, full auto vs 3 round burst) is mirrored so burst mode predicts
-3 shots per trigger pull; as a backstop for any mode desync, auto
-streams pause whenever the oldest in-flight prediction goes 350 ms
-without its server echo, until the next fresh click. Knife and grenades
+3 shots per trigger pull (with the server's ~700 ms burst recovery
+respected between pulls), and the MK23's semi/auto toggle likewise.
+Fire cycles are continuously calibrated against the server's actual
+echo cadence during play (the table values are only priors), so
+predicted rhythm aligns with real server fire rates on any server. As
+a backstop for any desync, auto streams pause whenever the oldest
+in-flight prediction goes 350 ms without its server echo, until the
+next fresh click. Knife and grenades
 keep the standard server-echo behavior, as do silenced shots. Known cosmetic
 limits: clicking during a reload or while bandaging may produce a local
 flash for a shot the server rejects; a silencer's first shot plays the
