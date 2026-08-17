@@ -603,15 +603,19 @@ float CL_XerpFireKickPitch(void)
         in_flight = 4;              // bound the predicted share
     target = in_flight * -1.5f;
 
-    // the in-flight count is discrete (steps on every prediction and every
-    // echo), and raw steps on top of the server's smoothly lerped climb
-    // read as a 10 Hz up/down chop — low-pass toward the target instead
-    // (~80 ms time constant, still far ahead of the round-trip)
+    // the in-flight count is a square wave at the fire rate (+1 per
+    // prediction, -1 per echo), so a symmetric filter always ripples.
+    // Asymmetric instead: new shots grow the lead fast (that IS the
+    // responsiveness), arriving echoes shrink it slowly — during a steady
+    // spray the brief zero-dips between shots never pull the lead down,
+    // so it holds flat; only a genuinely ended stream lets it settle.
     now = cls.realtime;
-    if (!last || now - last > 250) {
+    if (!last || now - last > 400) {
         cur = target;
     } else {
-        frac = (now - last) * (1.0f / 80);
+        float tc = fabsf(target) > fabsf(cur) ? 30 : 250;
+
+        frac = (now - last) * (1.0f / tc);
         if (frac > 1)
             frac = 1;
         cur += (target - cur) * frac;
