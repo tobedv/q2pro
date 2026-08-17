@@ -579,6 +579,8 @@ cvar_t *cl_xerp_ents;
 // so its error against the real position is measurable when it arrives
 static struct {
     vec3_t      pred;
+    vec3_t      err;            // last projection's error, decayed into the
+                                // render so corrections never snap
     int         frame;          // cl.frame.number the projection was made on
 } xe_hist[MAX_EDICTS];
 
@@ -633,14 +635,23 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     speed = VectorLength(vel) * (1000.0f / CL_FRAMETIME);
 
     // grade the previous projection against where the player really went
-    // (once per entity per snapshot: the store below ends the comparison)
-    if (xe_hist[s1->number].frame &&
-        cl.frame.number == xe_hist[s1->number].frame + 1) {
-        err = Distance(xe_hist[s1->number].pred, cent->current.origin);
-        xe_stats.err_sum += err;
-        if (err > xe_stats.err_max)
-            xe_stats.err_max = err;
-        xe_stats.checks++;
+    // (once per entity per snapshot: the store below ends the comparison),
+    // and carry the error so it can be blended out instead of snapping
+    if (cl.frame.number != xe_hist[s1->number].frame) {
+        if (xe_hist[s1->number].frame &&
+            cl.frame.number == xe_hist[s1->number].frame + 1) {
+            VectorSubtract(xe_hist[s1->number].pred, cent->current.origin,
+                           xe_hist[s1->number].err);
+            err = VectorLength(xe_hist[s1->number].err);
+            xe_stats.err_sum += err;
+            if (err > xe_stats.err_max)
+                xe_stats.err_max = err;
+            xe_stats.checks++;
+            if (err > 48)           // too wrong to smooth: snap
+                VectorClear(xe_hist[s1->number].err);
+        } else {
+            VectorClear(xe_hist[s1->number].err);
+        }
     }
 
     if (speed < 120) {
@@ -659,7 +670,12 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     VectorCopy(pred, xe_hist[s1->number].pred);
     xe_hist[s1->number].frame = cl.frame.number;
 
+    // render the fresh projection plus the old projection's error faded
+    // out over the frame — continuous at snapshot boundaries, converged
+    // to the new data by the end of the interval
     LerpVector(cent->current.origin, pred, cl.lerpfrac, org);
+    VectorMA(org, 1.0f - cl.lerpfrac, xe_hist[s1->number].err, org);
+
     xe_stats.extrapolated++;
     return true;
 }

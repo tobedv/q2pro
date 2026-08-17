@@ -919,17 +919,17 @@ during demo playback. Default value is 0.
 -   1 — extrapolate remote players one frame forward
 
 ### cl\_xerp\_buffer  
-Adaptive interpolation buffer. The client normally renders a
-connect-timing-random 0–100 ms behind the newest server snapshot; that
-offset delays everything you see, including kill confirmation. When set
-above 0, client time is slewed gently (max 2 ms per render frame, never
-snapped) toward riding `value + 3x measured snapshot jitter`
-milliseconds behind the newest snapshot. If the buffer ever starves,
-extra margin is held for a few seconds before creeping back in. Lower
-values give a fresher view and faster feedback; raise the value if you
-see stutter on an unstable connection. The current delay is visible as
-`interp` in the `cl_xerp_debug` overlay. Inactive during demo playback.
-Default value is 0 (disabled, standard behavior).
+Experimental, keep 0: field telemetry invalidated this feature's
+premise. The engine renders between only the two most recent snapshots,
+and its existing time clamps already self-stabilize rendering at the
+minimum delay that interpolation allows (~half a server frame on
+average). Setting a positive value asks for a margin the two-snapshot
+window cannot hold: it is low-clamped away at every snapshot arrival,
+producing rhythmic 10 Hz time-skips instead of a fresher view. Doing
+better requires rendering against a third (older) snapshot, which is a
+larger engine change. Retained for experimentation; `cl_xerp_debug 2`
+logs its behavior as `xerpbuf` lines. Default value is 0 (disabled,
+standard behavior — recommended).
 
 -   2 — as 1, plus every fire decision is logged to the console:
     predictions, skip reasons (empty clip, refire, unpredicted weapon),
