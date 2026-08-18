@@ -12,3 +12,5 @@ clang-build.sh
 /dev
 .DS_Store
 ericw-tools/
+.cache/
+__pycache__/
