@@ -84,6 +84,7 @@
     - [scr\_lag\_max](#scr_lag_max)
     - [cl\_xerp\_debug](#cl_xerp_debug)
     - [cl\_xerp\_fire](#cl_xerp_fire)
+    - [cl\_xerp\_fire\_cut](#cl_xerp_fire_cut)
     - [cl\_xerp\_zoom](#cl_xerp_zoom)
     - [cl\_xerp\_ents](#cl_xerp_ents)
     - [cl\_xerp\_buffer](#cl_xerp_buffer)
@@ -866,19 +867,23 @@ gameplay or rendering of the world. First member of the `cl_xerp_*`
 family of client-side netcode feel features. Hidden during demo
 playback. Default value is 0.
 
--   0 — overlay hidden
+-   0 — overlay hidden, no telemetry
 
 -   1 — overlay visible
 
--   4 — telemetry logging as per 2, but with the overlay hidden — for
-    normal play with data collection
+-   2 — overlay visible, plus sparse telemetry appended to
+    `logs/xerp.log`: a `xerpbuf` render-clock summary every 5 seconds
+    (render-delay average/min/max, high/low clamp counts), `xerpents`
+    extrapolation-error windows, one `xerpkick spray` summary per recoil
+    spray, and rare anomaly lines. Volume is a few lines per minute —
+    safe to leave on during normal play.
 
--   2 — overlay visible, plus a `xerpbuf` timing summary logged to the
-    console every 5 seconds: render-delay average/min/max over the
-    window, the adaptive buffer's current target, high/low clamp counts,
-    and starvation events. Combine with `logfile 2` to persist for
-    offline analysis; this is the data source for validating
-    `cl_xerp_buffer` settings.
+-   3 — as 2, plus per-render-frame recoil/kick traces (`xerpview`) for
+    offline grading with `tools/xerpkick-residual.py`. Hundreds of lines
+    per second while firing — for focused validation runs, not matches.
+
+-   4 — telemetry logging as per 2, but with the overlay hidden — the
+    normal play-with-data-collection mode.
 
 ### cl\_xerp\_fire  
 See `doc/xerp.md` for the conceptual overview of the whole
@@ -914,6 +919,23 @@ spectating. Default value is 0.
 
 -   1 — instant predicted fire feedback
 
+-   2 — as 1, plus every fire decision is logged to `logs/xerp.log`
+    (requires `cl_xerp_debug` 2 or higher): predictions, skip reasons
+    (empty clip, refire, unpredicted weapon), click-to-echo latency per
+    shot, cadence calibration, own shots that were never predicted, and
+    predicted shots whose echo never arrived.
+
+### cl\_xerp\_fire\_cut  
+How much of the measured click-to-echo latency the predicted bang cuts
+away, as a fraction. `1` plays the bang the instant the click is
+sampled; `0.5` plays it at half the round-trip; `0` reproduces the old
+echo timing — but always on the local clock, so even low settings render
+an evenly-paced stream instead of jittery echo arrivals. Exists because
+a lifetime of muscle memory is calibrated to the old delay: the dial
+lets the earliness be walked in gradually (`1 → 0.75 → 0.5`), exactly
+like the `cl_xerp_ents` strength dial does for extrapolation. Default
+value is 1.
+
 ### cl\_xerp\_zoom (removed)  
 Predicted sniper zoom was built and removed after field data showed
 the zoom-in delay is a deliberate ~600 ms server-side weapon settle,
@@ -929,16 +951,22 @@ server frame in the past), the interpolation window is shifted one
 frame forward: players render between the newest snapshot and its
 velocity projection — the same visual effect server-side xerp
 (`use_xerp`) produces, computed locally so it works on every server.
-Purely visual; hit detection is unchanged. Safeguards: extrapolation is
-skipped below 120 ups (so strafe-wiggle isn't amplified), above 2000
-ups (teleport/respawn-sized jumps snap), and on teleport events. While
+Purely visual; hit detection is unchanged. Safeguards: the lead fades
+out over a speed ramp below `cl_xerp_ents_minspeed` (default 120 ups —
+full lead at that speed, none at half of it, so decelerating players
+shed their lead gradually instead of popping), is scaled by velocity
+consistency between consecutive snapshots (full lead on steady
+movement, cut immediately on a strafe reversal — the maximally
+unpredictable case — with gradual recovery so re-engagement glides),
+and is dropped entirely above 2000 ups (teleport/respawn-sized jumps
+snap) and on teleport events. All damping factors are interpolated
+across the render frame exactly like the position itself, so none of
+them can step the rendered origin at a snapshot boundary. While
 enabled the client reports `cl_xerp 0` to the server so `use_xerp`
 servers don't extrapolate on top (the archived cvar is not modified).
 The value is a fractional strength dial: `1` renders a full server
 frame ahead, `0.5` half a frame, and so on — a gradual control between
-stock interpolation and full extrapolation. `cl_xerp_ents_minspeed`
-(default 120 ups) sets the speed below which players are never
-extrapolated.
+stock interpolation and full extrapolation.
 Note that the legacy `cl_xerp` cvar only controls server-side xerp and
 is independent of the `cl_xerp_*` family. Caveat: on the rare server
 running `sv_antilag_interp 1` (whose lag compensation already covers
@@ -964,12 +992,6 @@ server frame on average), and any requested margin was low-clamped
 away at every snapshot arrival as rhythmic 10 Hz time-skips. Doing
 better requires a third-snapshot renderer. The `xerpbuf` render-clock
 telemetry (under `cl_xerp_debug 2`) remains.
-
--   2 — as 1, plus every fire decision is logged to the console:
-    predictions, skip reasons (empty clip, refire, unpredicted weapon),
-    click-to-echo latency per shot, own shots that were never predicted,
-    and predicted shots whose echo never arrived. Set `logfile 2` to
-    persist the console to `logs/console.log` for later analysis.
 
 ### scr\_chathud  
 Toggles drawing of the last chat lines on the screen. Default value is

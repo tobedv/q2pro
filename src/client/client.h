@@ -874,6 +874,7 @@ void CL_PredictMovement(void);
 void CL_CheckPredictionError(void);
 void CL_XerpFireClear(void);
 void CL_XerpFireCheck(bool attack);
+void CL_XerpFireService(void);
 bool CL_XerpFireSuppress(void);
 void CL_XerpFireZoomChanged(void);
 void CL_XerpFireModeToggle(void);

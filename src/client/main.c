@@ -3450,6 +3450,9 @@ unsigned CL_Frame(unsigned msec)
     // read user intentions
     CL_UpdateCmd(main_extra);
 
+    // play any due predicted bangs at render rate, not just on phys frames
+    CL_XerpFireService();
+
     // finalize pending cmd
     phys_frame |= cl.sendPacketNow;
     if (phys_frame) {

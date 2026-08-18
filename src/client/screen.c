@@ -720,7 +720,8 @@ float SCR_XerpJitter(void)
     return xerpdbg.jitter;
 }
 
-// 0 = off, 1 = overlay, 2 = overlay + timing stats logged to console
+// 0 = off, 1 = overlay only, 2 = overlay + telemetry to logs/xerp.log,
+// 3 = 2 + per-frame recoil/kick traces, 4 = telemetry without the overlay
 int SCR_XerpDebugLevel(void)
 {
     return cl_xerp_debug ? cl_xerp_debug->integer : 0;

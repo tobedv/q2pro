@@ -202,22 +202,34 @@ own data, and **removed** rather than left as dormant switches:
 
 ## Validation telemetry
 
-With `cl_xerp_debug 2`, everything above writes evidence to
-`logs/xerp.log` (its own file — the console stays clean): per-shot
-predictions, skip reasons, and click-to-echo latency; cadence
-calibration and mode detection events; per-window extrapolation error
-(every projection graded against the player's real position on the next
-snapshot); render-clock statistics. Every behavior in this document was
-either derived from or corrected by this data, and any future
-regression shows up in the same place.
+With `cl_xerp_debug 2` (or 4, the same logging with the overlay
+hidden), everything above writes evidence to `logs/xerp.log` (its own
+file — the console stays clean): per-shot predictions, skip reasons,
+and click-to-echo latency; cadence calibration and mode detection
+events; per-window extrapolation error (every projection graded against
+the player's real position on the next snapshot); render-clock
+statistics. The log appends across sessions; a `=== session` header
+(date, build) is written at every startup and a `=== map` marker at
+every level start, so multi-day logs segment cleanly for analysis.
+Every behavior in this document was either derived from or corrected by
+this data, and any future regression shows up in the same place.
+
+Cost: levels 2 and 4 emit a few lines per minute plus one line per
+recoil spray — designed to stay on during real matches with no
+measurable overhead (every log call is level-gated before any
+formatting, and timestamps reuse a per-second cache). Level 3 traces
+every rendered frame while firing (hundreds of lines per second,
+line-buffered writes) — still only fractions of a millisecond per
+second, but meant for focused validation runs, not matches.
 
 ## Quick reference
 
 | Cvar | Values | Purpose |
 |---|---|---|
 | `cl_xerp_fire` | 0 / 1 / 2 | instant own-fire feedback; 2 adds per-shot logging |
+| `cl_xerp_fire_cut` | 0.0 – 1.0 | fraction of the echo latency the predicted bang cuts away (1 = at the click) |
 | `cl_xerp_ents` | 0.0 – 1.0 | player extrapolation strength dial |
-| `cl_xerp_ents_minspeed` | ups, default 120 | speed floor below which players interpolate normally |
-| `cl_xerp_debug` | 0 / 1 / 2 / 3 | off / overlay / + `logs/xerp.log` telemetry / + per-frame recoil trace |
+| `cl_xerp_ents_minspeed` | ups, default 120 | full lead at this speed, fading to none at half of it |
+| `cl_xerp_debug` | 0 – 4 | off / overlay / + `logs/xerp.log` telemetry / + per-frame recoil trace / telemetry without overlay (play mode) |
 
 See `doc/client.md` for the full per-cvar reference.

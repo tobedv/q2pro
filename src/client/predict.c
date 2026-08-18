@@ -347,6 +347,11 @@ void CL_XerpLog(const char *fmt, ...)
             return;
         }
         Com_Printf("Logging xerp telemetry to %s\n", path);
+        // session header: the log appends across days of games, and
+        // offline analysis needs to segment it by session and build
+        Com_FormatLocalTime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S");
+        FS_FPrintf(xerp_logfile, "=== session %s, %s\n",
+                   stamp, com_version_string);
     }
 
     va_start(ap, fmt);
@@ -422,6 +427,15 @@ static void xf_bang_service(void)
             xf_bang_play(xf_bangs[i].mz_weapon);
         }
     }
+}
+
+// render-rate entry point, called from CL_Frame: bangs scheduled by the cut
+// dial (cl_xerp_fire_cut < 1) are timing-critical, and CL_FinalizeCmd alone
+// services them only on phys frames — a full 16 ms grid at cl_maxfps 62
+void CL_XerpFireService(void)
+{
+    if (cls.state == ca_active && !cls.demo.playback)
+        xf_bang_service();
 }
 
 #define XF_LOG(fmt, ...) \
@@ -1114,6 +1128,9 @@ void CL_XerpFireClear(void)
     memset(&xkg, 0, sizeof(xkg));
     memset(&xki, 0, sizeof(xki));
     memset(xf_bangs, 0, sizeof(xf_bangs));
+
+    // level marker, so multi-game logs segment by map and server
+    CL_XerpLog("=== map %s @ %s\n", cl.mapname, cls.servername);
 }
 
 /*
@@ -1544,7 +1561,12 @@ static struct {
     vec3_t      pred;
     vec3_t      vel;            // last snapshot's per-frame displacement,
                                 // for velocity-consistency scaling
-    float       ts_from, ts_to; // turn scale pair, lerped across the frame
+    float       ts;             // turn scale after asymmetric recovery, kept
+                                // separately so recovery references pure
+                                // turn history, not the speed ramp
+    float       scale_from, scale_to;   // combined turn x speed blend pair,
+                                        // lerped across the frame like the
+                                        // position itself
     vec3_t      err;            // last projection's error, decayed into the
                                 // render so corrections never snap
     int         frame;          // cl.frame.number the projection was made on
@@ -1619,21 +1641,45 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     }
 
     // grade the previous projection against where the player really went
-    // (once per entity per snapshot: the store below ends the comparison),
-    // and carry the error so it can be blended out instead of snapping
+    // (once per entity per snapshot: the frame store below ends the
+    // comparison), refresh the blend target from this snapshot's speed and
+    // velocity consistency, and carry the error so it can be blended out
+    // instead of snapping
     if (cl.frame.number != xe_hist[s1->number].frame) {
+        // speed damping is a ramp, not a cliff: full extrapolation at
+        // minspeed, fading to none at half of it. A hard cutoff made every
+        // abrupt stop (bots especially) pop back from the extrapolated
+        // lead in one step — the "floating" artifact. With the ramp,
+        // decelerating players shed their lead gradually.
+        float minspeed = cl_xerp_ents_minspeed->value;
+        float target = 1.0f;
+
+        if (minspeed > 0 && speed < minspeed) {
+            target = (speed - minspeed * 0.5f) / (minspeed * 0.5f);
+            if (target < 0)
+                target = 0;
+        }
+
         if (xe_hist[s1->number].frame &&
             cl.frame.number == xe_hist[s1->number].frame + 1) {
             xe_class_stats_t *cs = &xe_stats.players;
             float ts, ol, nl;
+            // grade into the stats only if the projection was actually
+            // rendered — parked entities are still graded for continuity,
+            // but their trivially-right predictions must not dilute the
+            // error figures real extrapolation is judged by
+            bool used = xe_hist[s1->number].scale_from > 0 ||
+                        xe_hist[s1->number].scale_to > 0;
 
             VectorSubtract(xe_hist[s1->number].pred, cent->current.origin,
                            xe_hist[s1->number].err);
             err = VectorLength(xe_hist[s1->number].err);
-            cs->err_sum += err;
-            if (err > cs->err_max)
-                cs->err_max = err;
-            cs->checks++;
+            if (used) {
+                cs->err_sum += err;
+                if (err > cs->err_max)
+                    cs->err_max = err;
+                cs->checks++;
+            }
             if (err > 48)           // too wrong to smooth: snap
                 VectorClear(xe_hist[s1->number].err);
 
@@ -1656,39 +1702,45 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
             // read as chop. Full lead at dot >= 0.7, fading below.
             ts = ts <= 0 ? 0 : (ts >= 0.7f ? 1.0f : ts * (1.0f / 0.7f));
             // asymmetric in time: a reversal cuts the lead immediately
-            // (safety), but recovery is gradual so re-engagement glides
-            if (ts >= xe_hist[s1->number].ts_to)
-                ts = xe_hist[s1->number].ts_to +
-                     (ts - xe_hist[s1->number].ts_to) * 0.35f;
-            xe_hist[s1->number].ts_from = xe_hist[s1->number].ts_to;
-            xe_hist[s1->number].ts_to = ts;
+            // (safety), but recovery is gradual so re-engagement glides —
+            // and since a standstill zeroes ts the same way a reversal
+            // does, a player peeking out of a full stop glides in too
+            if (ts >= xe_hist[s1->number].ts)
+                ts = xe_hist[s1->number].ts +
+                     (ts - xe_hist[s1->number].ts) * 0.35f;
+            xe_hist[s1->number].ts = ts;
+
+            // both dampers ride the same lerped pair: neither the turn
+            // scale nor the speed ramp may step the rendered origin at a
+            // snapshot boundary (per-frame ramp application popped the
+            // lead of abruptly stopping players in one step)
+            xe_hist[s1->number].scale_from = xe_hist[s1->number].scale_to;
+            xe_hist[s1->number].scale_to = target * ts;
         } else {
             VectorClear(xe_hist[s1->number].err);
-            xe_hist[s1->number].ts_from = xe_hist[s1->number].ts_to = 1;
+            xe_hist[s1->number].ts = 1;
+            // no usable history to glide from: adopt the target flat
+            xe_hist[s1->number].scale_from =
+            xe_hist[s1->number].scale_to = target;
         }
         VectorCopy(vel, xe_hist[s1->number].vel);
     }
 
-    // speed damping is a ramp, not a cliff: full extrapolation at minspeed,
-    // fading to none at half of it. A hard cutoff made every abrupt stop
-    // (bots especially) pop back from the extrapolated lead in one step —
-    // the "floating" artifact. With the ramp, decelerating players shed
-    // their lead gradually.
-    float minspeed = cl_xerp_ents_minspeed->value;
-    float speed_scale = 1.0f;
-
-    if (minspeed > 0 && speed < minspeed) {
-        speed_scale = (speed - minspeed * 0.5f) / (minspeed * 0.5f);
-        if (speed_scale <= 0) {
-            xe_stats.slow++;
-            xe_hist[s1->number].frame = 0;
-            return false;           // genuinely stationary: don't guess
-        }
-    }
+    // the projection is stored even while the blend is parked at zero so
+    // grading and the from/to pair stay continuous — re-engagement then
+    // glides in from real history instead of snapping to full lead
     VectorAdd(cent->current.origin, vel, pred);
-
     VectorCopy(pred, xe_hist[s1->number].pred);
     xe_hist[s1->number].frame = cl.frame.number;
+
+    float blend = xe_hist[s1->number].scale_from +
+        (xe_hist[s1->number].scale_to - xe_hist[s1->number].scale_from) *
+        cl.lerpfrac;
+
+    if (blend <= 0) {
+        xe_stats.slow++;
+        return false;               // stationary or reversing: don't guess
+    }
 
     // render the fresh projection plus the old projection's error faded
     // out over the frame — continuous at snapshot boundaries, converged
@@ -1696,19 +1748,15 @@ bool CL_XerpEntsOrigin(centity_t *cent, entity_state_t *s1, vec3_t org)
     LerpVector(cent->current.origin, pred, cl.lerpfrac, org);
     VectorMA(org, 1.0f - cl.lerpfrac, xe_hist[s1->number].err, org);
 
-    // fractional strength: the cl_xerp_ents dial (0..1) times the speed
-    // ramp blends between stock interpolation and full extrapolation
-    // turn scale lerped across the frame like the position itself
-    float turn_scale = xe_hist[s1->number].ts_from +
-        (xe_hist[s1->number].ts_to - xe_hist[s1->number].ts_from) *
-        cl.lerpfrac;
-    float scale = cl_xerp_ents->value * speed_scale * turn_scale;
+    // fractional strength: the cl_xerp_ents dial (0..1) times the lerped
+    // turn/speed blend, between stock interpolation and full extrapolation
+    float scale = cl_xerp_ents->value * blend;
     if (scale < 1) {
         vec3_t stock;
 
         LerpVector(cent->prev.origin, cent->current.origin,
                    cl.lerpfrac, stock);
-        LerpVector(stock, org, scale > 0 ? scale : 0, org);
+        LerpVector(stock, org, scale, org);
     }
 
     xe_stats.players.extrapolated++;
