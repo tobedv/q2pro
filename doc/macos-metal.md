@@ -41,20 +41,40 @@ no-ops for desktop GL contexts and non-Apple platforms):
 - EGL symbol resolution retries until libEGL is actually loaded, so a
   desktop-GL fallback boot followed by `vid_restart` into es3.0 still gets
   the fix.
+- **Self-configuration**: when `libEGL.dylib` + `libGLESv2.dylib` sit next
+  to the executable, the engine preloads them by absolute path (so SDL's
+  and qal.c's leaf-name `dlopen` resolve without `DYLD_LIBRARY_PATH`),
+  sets `SDL_OPENGL_ES_DRIVER=1` and `ANGLE_DEFAULT_PLATFORM=metal`
+  (no-overwrite), and defaults `gl_profile` to `es3.0`. The user
+  environment and `+set` always win; without the dylibs nothing changes.
+- **Tripwire**: on macOS an ES context whose `GL_RENDERER` doesn't contain
+  `ANGLE Metal Renderer` logs a warning — the guard against silently
+  landing back on a translation stack.
 
 ## Runtime setup
 
-The engine needs ANGLE's dylibs and two environment variables:
+Drop `libEGL.dylib` + `libGLESv2.dylib` next to the `q2pro` binary and run
+it — the engine self-configures (see above). Escape hatches:
+
+- `+set gl_profile ""` (or any desktop profile) forces Apple's GL stack.
+- Delete/rename the dylibs: the engine boots desktop GL as if nothing
+  happened.
+- Exporting any of the env vars yourself overrides the bootstrap's values.
+
+Verified boot drills (all with a scrubbed environment): dylibs present →
+`ANGLE Metal Renderer` + OpenAL, no `DYLD_LIBRARY_PATH` needed; dylibs
+absent → clean desktop GL boot; `+set gl_profile ""` → desktop GL wins
+over the default.
+
+For binaries without the bootstrap (upstream builds, older prototypes) the
+manual environment still works:
 
 ```sh
-# libEGL.dylib + libGLESv2.dylib must be findable by dlopen
 export DYLD_LIBRARY_PATH="/path/to/angle:$DYLD_LIBRARY_PATH"
-# make SDL create the ES context through ANGLE
 export SDL_OPENGL_ES_DRIVER=1
-# IMPORTANT: without this, ANGLE picks its OpenGL backend on macOS and you
+# without this a GL-backend-enabled ANGLE picks OpenGL on macOS and you
 # get ES -> Apple GL -> Metal double translation (~10x slower, see below)
 export ANGLE_DEFAULT_PLATFORM=metal
-
 ./q2pro +set gl_profile es3.0
 ```
 
@@ -82,6 +102,38 @@ indices natively, so the `opengl-es1`/`USE_GLES` option is *not* required.
 meson setup build   # buildtype=release is the project default
 ninja -C build
 ```
+
+## Building ANGLE locally
+
+Chrome's bundled dylibs are fine for prototyping; a local build removes the
+Chrome dependency and, built Metal-only, makes the double-translation trap
+impossible (there is no GL backend to fall into). First fetch downloads
+depot_tools plus a large Chromium toolchain (~15–20 GB); the build itself is
+minutes on Apple silicon.
+
+```sh
+git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+export PATH="$PWD/depot_tools:$PATH"
+mkdir angle && cd angle && fetch angle    # long; resumable with gclient sync
+
+gn gen out/Metal --args='is_debug=false is_component_build=false
+  angle_enable_metal=true angle_enable_gl=false angle_enable_vulkan=false
+  angle_enable_swiftshader=false angle_build_tests=false'
+autoninja -C out/Metal libEGL libGLESv2
+
+# install: copy out/Metal/{libEGL,libGLESv2}.dylib next to q2pro,
+# plus LICENSE (BSD) as ANGLE-LICENSE. Note the pinned commit (git rev-parse
+# HEAD) so the build is reproducible; update via gclient sync, not blindly.
+```
+
+Verify in-game after swapping dylibs: `GL_RENDERER` must still say
+`ANGLE Metal Renderer` (the init log and the tripwire both check this).
+
+Optional latency experiment for a local build: in
+`src/libANGLE/renderer/metal/SurfaceMtl.mm`, where the `CAMetalLayer` is
+configured, set `maximumDrawableCount = 2` (default 3) — bounds the present
+queue at ~1 frame like `gl_finish 1` does, but on the layer itself. Keep it
+env-gated if patching, and treat it as an experiment, not the default.
 
 ## Measured results (M3 Pro, bwcity2, `timerefresh`, 1280x720 windowed)
 
