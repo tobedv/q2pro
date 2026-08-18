@@ -23,10 +23,24 @@ rewrite** — only the small engine fix in this branch plus runtime setup.
 `src/unix/video/sdl.c`: SDL's Cocoa EGL path reports the window's *logical*
 size, but ANGLE backs its EGL surface with a `CAMetalLayer` at *native
 (Retina) pixel* scale. Without correction the engine's viewport covers only
-the bottom-left quarter of the screen on a HiDPI display. `mode_changed()` now
-queries the true surface size from EGL (`eglQuerySurface`) when an EGL context
-is active; this is a no-op for desktop GL contexts and non-Apple platforms.
-Side effect: the game renders at full native resolution on Retina displays.
+the bottom-left quarter of the screen on a HiDPI display. Changes (all
+no-ops for desktop GL contexts and non-Apple platforms):
+
+- `mode_changed()` queries the true surface size from EGL
+  (`eglQuerySurface`) when an EGL context is active. Side effect: the game
+  renders at full native resolution on Retina displays.
+- `mode_changed()` now runs on `SDL_WINDOWEVENT_SIZE_CHANGED` (RESIZED is
+  the external-only subset of it) and on `SDL_WINDOWEVENT_DISPLAY_CHANGED`,
+  so moving the window to a display with a different backing scale —
+  which changes the drawable size without a window resize — re-syncs.
+- ANGLE applies layer resizes at *swap* time, so an event-time query can
+  still see the previous size; after every swap the EGL surface size is
+  re-checked and the engine re-syncs if it drifted. This also covers
+  fullscreen transitions, where `set_mode()` queries before any swap has
+  resized the surface.
+- EGL symbol resolution retries until libEGL is actually loaded, so a
+  desktop-GL fallback boot followed by `vid_restart` into es3.0 still gets
+  the fix.
 
 ## Runtime setup
 
@@ -92,6 +106,32 @@ Interpretation (from CPU sampling, not guesswork):
   better: lower input latency and more consistent pacing, especially with
   `gl_swapinterval 1` on high-refresh displays. Fullscreen with direct
   scanout the uncapped ceiling is higher than the windowed number.
+
+## Verifying smoothness / latency knobs
+
+The end goal is pacing and input latency, not uncapped fps. Tools and knobs,
+in order of usefulness:
+
+- `MTL_HUD_ENABLED=1` (or `launch-metal.sh hud`) overlays Apple's Metal
+  performance HUD: present mode (**Direct** scanout vs **Composited**),
+  actual frame-interval graph, GPU time. This is the definitive instrument.
+  Windowed is always composited; fullscreen on a display the layer covers
+  should read Direct — if it does not, latency is being left on the table.
+- `gl_finish 1` (console, live): `R_BeginFrame` then calls `glFinish`,
+  bounding CPU run-ahead to ~1 frame. With ~0.15 ms GPU frames the
+  throughput cost is nil, and it cuts worst-case present-queue latency:
+  the `CAMetalLayer` holds the default 3 drawables, i.e. up to ~2 queued
+  frames ≈ 8 ms at 240 Hz. Good A/B knob for input feel.
+- `maximumDrawableCount = 2` would be the cleaner fix for the same thing,
+  but ANGLE exposes no knob for it (verified: no setter call in the
+  shipped dylib). One-line patch in `WindowSurfaceMtl` once we build ANGLE
+  from source in CI.
+- The shipped Chrome dylibs honor `ANGLE_FEATURE_OVERRIDES_ENABLED` /
+  `ANGLE_FEATURE_OVERRIDES_DISABLED` env vars; defaults are Chrome-tuned
+  for Apple silicon and profiling shows nothing worth overriding.
+- When judging feel by eye, disable log flushing and debug spam
+  (`launch-metal.sh quiet`): per-line synchronous log writes during
+  firefights are tiny but nonzero jitter.
 
 ## Caveats / open items
 
