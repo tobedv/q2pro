@@ -531,6 +531,10 @@ static struct {
     int         stream_echoes;      // echoes consumed since the last edge,
                                     // for burst-mode detection
     bool        was_normal;         // previous frame's pm_type was NORMAL
+    bool        was_frozen;         // ... and the excursion was PM_FREEZE
+                                    // (LCA countdown), not a death/spawn
+    unsigned    raise_logged;       // raise_until value already logged, so
+                                    // held streams report the hold once
     int         last_widx;          // weapon held last frame, -1 = none
     struct {
         unsigned    time;
@@ -860,8 +864,13 @@ void CL_XerpKickEcho(void)
 
     if (cls.state != ca_active)
         return;                     // demo playback is fine and wanted
-    if (mz.entity != cl.frame.clientNum + 1)
-        return;                     // someone else's flash
+    if (mz.entity != cl.clientNum + 1)
+        return;                     // someone else's flash — cl.clientNum,
+                                    // NOT cl.frame.clientNum: in TNG's dead
+                                    // chasecam the frame POV is the chased
+                                    // teammate, whose sprays must not step
+                                    // the mirror (field bug: chased M4s
+                                    // logged as own and polluted A)
 
     // M3 / handcannon: one fixed -2 impulse rides the frame that carries
     // this flash (these MZ codes are never collapsed by llsound 0)
@@ -1085,7 +1094,8 @@ float CL_XerpKickDelta(float lerp, float kick_pitch)
     // predicted (raise hold, watchdog pause) raise it too — so S can
     // never double-step one shot at any RTT, and catches up to reality
     // with queued classic-rate pieces when predictions were withheld
-    if (cl_xerp_fire->integer && !cls.demo.playback && xf.prev_attack &&
+    if (cl_xerp_fire->integer && !cls.demo.playback &&
+        cl.frame.clientNum == cl.clientNum && xf.prev_attack &&
         !xf_mode.m4_burst && !xkg.stalled) {
         int target = xka.shots;
         unsigned i;
@@ -1106,7 +1116,10 @@ float CL_XerpKickDelta(float lerp, float kick_pitch)
     A += xki_lerped(lerp);
     S += xki_triangle(xki.gen_time, now);
 
-    if (cl_xerp_fire->integer && !cls.demo.playback)
+    // POV must be us: in a dead-chasecam frame the kick channel carries
+    // the chased teammate's gun, and no delta of ours belongs on it
+    if (cl_xerp_fire->integer && !cls.demo.playback &&
+        cl.frame.clientNum == cl.clientNum)
         delta = S - A;
 
     if (SCR_XerpDebugLevel() == 3 &&
@@ -1162,8 +1175,8 @@ bool CL_XerpFireSoundSuppress(void)
 
     if (!cl_xerp_fire->integer || cls.demo.playback)
         return false;
-    if (snd.entity != cl.frame.clientNum + 1)
-        return false;               // someone else's sound
+    if (snd.entity != cl.clientNum + 1)
+        return false;               // someone else's sound (incl. chase POV)
     if (snd.channel != CHAN_WEAPON && snd.channel != CHAN_ITEM)
         return false;               // CHAN_ITEM: the HC's double-barrel boom
     if (!xf.last_fire || cls.realtime - xf.last_fire > XF_ECHO_WINDOW)
@@ -1272,6 +1285,9 @@ void CL_XerpFireCheck(bool attack)
     // or a held respawn click bangs the instant we spawn
     if (ps->pmove.pm_type != PM_NORMAL) {
         xf.was_normal = false;
+        // remember WHY normal play was left: an LCA round-countdown
+        // freeze is not a spawn — the weapon raise plays during it
+        xf.was_frozen = ps->pmove.pm_type == PM_FREEZE;
         xkg_release("left normal play");
         if (edge && XF_VERBOSE)
             XF_LOG("skip: not in normal play (pm_type %d)\n", ps->pmove.pm_type);
@@ -1279,9 +1295,22 @@ void CL_XerpFireCheck(bool attack)
     }
     if (!xf.was_normal) {
         xf.was_normal = true;
-        xf.raise_until = cls.realtime + 1000;
-        if (XF_VERBOSE)
-            XF_LOG("spawned - holding fire for the weapon raise\n");
+        // a new life starts with the spawn weapon already in hand: the
+        // previous life's last_widx must not read as a weapon switch
+        // (field bug: a false 900 ms "switch" hold fired at the first
+        // click of nearly every round, and its canceling echo
+        // double-banged the spray start)
+        xf.last_widx = -1;
+        if (xf.was_frozen) {
+            // unfrozen at round start: the raise already played during
+            // the countdown — hold nothing, the opening fight is live
+            if (XF_VERBOSE)
+                XF_LOG("unfrozen - round live, no raise hold\n");
+        } else {
+            xf.raise_until = cls.realtime + 1000;
+            if (XF_VERBOSE)
+                XF_LOG("spawned - holding fire for the weapon raise\n");
+        }
     }
 
     if (!attack)
@@ -1313,15 +1342,24 @@ void CL_XerpFireCheck(bool attack)
 
     now = cls.realtime;
 
-    // switching weapons also plays a raise animation server-side
+    // switching weapons also plays a raise animation server-side — but
+    // the first weapon seen in a life (last_widx -1) is the spawn
+    // loadout, not a switch
     if (xf.last_widx != (int)(w - xf_weapons)) {
+        bool first = xf.last_widx < 0;
+
         xf.last_widx = (int)(w - xf_weapons);
-        if (xf.raise_until < now + 900)
+        if (!first && xf.raise_until < now + 900)
             xf.raise_until = now + 900;
     }
     if (now < xf.raise_until) {
-        if (edge && XF_VERBOSE)
-            XF_LOG("skip: weapon raising, %u ms left\n", xf.raise_until - now);
+        // log once per hold window, held streams included — silent
+        // non-edge holds cost a field debugging session
+        if (XF_VERBOSE && xf.raise_logged != xf.raise_until) {
+            xf.raise_logged = xf.raise_until;
+            XF_LOG("skip: weapon raising, %u ms left%s\n",
+                   xf.raise_until - now, edge ? "" : " (held)");
+        }
         return;
     }
     if (w->mz_weapon == MZ_HYPERBLASTER &&
@@ -1468,8 +1506,9 @@ bool CL_XerpFireSuppress(void)
 
     if (!cl_xerp_fire->integer)
         return false;
-    if (mz.entity != cl.frame.clientNum + 1)
-        return false;               // someone else's flash
+    if (mz.entity != cl.clientNum + 1)
+        return false;               // someone else's flash (chasecam POV
+                                    // flashes included — they play normally)
 
     now = cls.realtime;
 
@@ -1480,6 +1519,21 @@ bool CL_XerpFireSuppress(void)
         xf.raise_until = 0;
         if (XF_VERBOSE)
             XF_LOG("raise hold canceled - server is firing\n");
+        // if the trigger is held, the freed stream re-bangs within one
+        // phys frame — absorb this echo instead of letting it double the
+        // spray start (the audible round-start double: canceling echo
+        // plus the first prediction ~50 ms apart). A lone click keeps
+        // the echo, else its shot would go silent.
+        if (xf.prev_attack) {
+            const xf_weapon_t *held = xf_find_weapon(false);
+
+            if (held && (held->mz_weapon == mz.weapon ||
+                         mz.weapon == MZ_MACHINEGUN)) {
+                if (XF_VERBOSE)
+                    XF_LOG("echo absorbed at hold cancel - stream takes over\n");
+                return true;
+            }
+        }
     }
     while (xf.tail != xf.head &&
            now - xf.pending[xf.tail % XF_PENDING_MAX].time > XF_ECHO_WINDOW) {
