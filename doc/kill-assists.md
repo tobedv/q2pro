@@ -1,8 +1,12 @@
-# Kill Assists — Feasibility Investigation
+# Kill Assists
 
 **Question:** can the AQtion/TNG game server be extended to award *assists* on a kill?
 
-**Answer:** yes, and it is a small, low-risk change. The game DLL already has every hook
+**Answer:** yes — and it now does. Sections 1-5 record the investigation that led here;
+sections 6-9 document what shipped, and are the part to read if you just want to know how the
+feature works or how to turn it on.
+
+The game DLL already had every hook
 needed (a single choke point for damage, a single choke point for death, free per-life and
 per-match reset points, and an existing time-windowed "you helped" award in CTF to copy the
 style from). Nothing about it requires a network protocol change unless you want an assists
@@ -103,157 +107,178 @@ codebase's idiom — it is a generalisation of code that already ships.
 | Unicast event to capable clients | `TE_DAMAGE_DEALT` hit markers, `p_view.c:1698-1707` | already gated on `Client_GetProtocol()`/`Client_GetVersion()`; the same gate could carry an assist event |
 | Stats API / log | `LogKill()` `tng_stats.c:980` | see §7 |
 
-## 6. Proposed design
+## 6. What shipped
 
-### 6.1 Per-life ledger (in `gclient_s`, `g_local.h`)
+Implemented in `src/action/a_assist.c` (new module, following the `a_ctf.c` / `a_dom.c`
+convention for self-contained features), wired into the existing damage and death paths.
+
+### 6.1 Per-life ledger
+
+`assist_track_t` in `g_local.h`, an 8-entry array on `gclient_s`:
 
 ```c
-#define MAX_ASSIST_TRACK 4      // distinct recent attackers remembered per life
-
-typedef struct {
-    edict_t *attacker;          // NULL = empty slot
-    int      enterframe;        // attacker's resp.enterframe, guards against slot reuse
-    int      damage;            // damage accumulated against us this life
-    int      last_framenum;     // when they last hurt us
-    int      mod;               // most recent means of death from them
+typedef struct assist_track_s
+{
+	edict_t	*attacker;		// who hurt us, NULL for an empty slot
+	int		enterframe;		// attacker's resp.enterframe, guards against client slot reuse
+	int		damage;			// effective damage they have dealt us this life
+	int		last_framenum;	// level.framenum of their most recent hit
+	int		mod;			// their most recent means of death
 } assist_track_t;
-
-assist_track_t assist_track[MAX_ASSIST_TRACK];
 ```
 
-Stored on the **victim**. Cleared for free by the `PutClientInServer` memset.
+Held on the **victim**, and wiped for free by the `PutClientInServer()` memset on every
+respawn, so it is always scoped to a single life. Eight slots covers the 8v8 upper bound; a
+5v5 round can fill at most five, so the eviction path is unreachable in normal play.
 
-Guarding against client-slot reuse matters: an attacker can disconnect and a new player take
-the slot before the victim dies. Pairing the `edict_t *` with `resp.enterframe` and validating
-`inuse && client && pers.connected` on read-back is cheap. The codebase already stores raw
-`edict_t *` and validates on use (`a_xgame.c:338-350`), so either convention is in keeping.
+Pairing the `edict_t *` with the attacker's `resp.enterframe` is what stops a disconnecting
+player's contribution from being credited to whoever next takes that client slot.
 
 ### 6.2 Recording
 
-In `T_Damage`, at the two points where `client->attacker` is already assigned
-(`g_combat.c:884-886` and `g_combat.c:954-956`), add a call:
+`Assist_RecordDamage(targ, attacker, damage, mod)` is called from `T_Damage` at both points
+where `client->attacker` is latched (`g_combat.c`). It reads `damage` after the location and
+armor multipliers have been applied, which is the same value the surrounding `resp.damage_dealt`
+and hit-marker accounting uses - and the only correct choice, since for bleeding weapons
+`take` is not applied to health at hit time.
 
-```c
-Assist_RecordDamage(targ, attacker, damage, mod);
-```
-
-Guards: `attacker->client && attacker != targ && !friendlyFire && !in_warmup`. Use `damage`
-(the pre-armor value) for consistency with the neighbouring `resp.damage_dealt` and hit-marker
-accounting, which both use `damage` rather than `take` — necessary anyway, since for bleeding
-weapons `take` is not applied to health at hit time.
-
-Slot policy: match existing attacker → accumulate; else take an empty slot; else evict the
-entry with the oldest `last_framenum`.
+Teammates never accumulate credit against each other, and self-damage is ignored.
 
 ### 6.3 Crediting
 
-New `Assist_Award(edict_t *victim, edict_t *killer, int mod)`, called from `ClientObituary()`.
-Cleanest is one call immediately after the frag is booked, covering both crediting sites
-(`p_client.c:1187-1207` for the push/fall path, `p_client.c:1565-1583` for the normal path).
+`Assist_Award(victim, killer)` is called from `ClientObituary()` immediately after `Add_Frag`,
+at both crediting sites - so warmup and round-state gating is inherited from the caller rather
+than duplicated. Bleed-out deaths need no special handling: `Do_Bleeding()` routes through
+`Killed()` into the same obituary path.
 
-For each ledger entry, credit when **all** hold:
+A ledger entry is credited when it is not the killer or the victim, the attacker is still
+connected in the same client slot, `damage >= assist_min_damage`, the last hit was within
+`assist_timeout`, and they are not on the victim's team. Survivors are sorted by damage
+descending and the top `assist_max` are awarded, so a cap of 2 rewards whoever actually did
+the work.
 
-* entry is valid and is not the killer and not the victim;
-* `entry->damage >= assist_min_damage`;
-* `level.framenum - entry->last_framenum <= assist_timeout * HZ`;
-* not on the victim's team (equivalently: on the killer's team, in team modes);
-* `!in_warmup`, and in round-based modes `team_round_going` — mirroring `Add_Frag`'s gating.
-
-Payout, in ledger order sorted by damage descending, capped at `assist_max` entries:
-
-```c
-ent->client->resp.assists++;
-if (assist_score->value)
-    ent->client->resp.score += (int)assist_score->value;
-```
-
-### 6.4 Cvars (register in `InitGame`, `g_save.c` around line 647 with the other gameplay cvars)
+### 6.4 Cvars
 
 | Cvar | Default | Meaning |
 | --- | --- | --- |
-| `use_assists` | `0` | master switch — ships off, so existing servers are unchanged |
+| `use_assists` | `0` | master switch - ships off, so existing servers are unchanged |
 | `assist_timeout` | `10` | seconds since the assister's last hit |
-| `assist_min_damage` | `25` | minimum accumulated damage to qualify |
+| `assist_min_damage` | `25` | minimum accumulated damage to qualify (~a quarter of a player's health) |
 | `assist_score` | `0` | score points per assist; `0` keeps scoring semantics identical |
 | `assist_max` | `2` | max assists credited per kill |
-| `assist_announce` | `1` | print "X assisted Y's kill of Z" |
+| `assist_announce` | `1` | console line to the assister and the killer |
 
-Defaulting `use_assists` and `assist_score` to off means the feature is observable (counters,
-stats) before it is allowed to move anybody's score — important for a mod with an established
-competitive scene and matchmode configs (`a_match.c:1077` already force-sets gameplay cvars for
-matches, so match configs get an explicit knob).
+Registered in `InitGame` (`g_save.c`) alongside the other gameplay cvars, and documented in
+`doc/action.md` and `action/doc/tngcvar.txt`.
 
-### 6.5 Counters (in `client_respawn_t`)
+Defaulting both `use_assists` and `assist_score` to off means the feature is observable -
+counters, scoreboard column, telemetry - before it is allowed to move anybody's score. That
+matters for a mod with an established competitive scene; a server can collect the stat for a
+few weeks and then decide whether it should count.
 
-```c
-int assists;            // this match
-int roundAssists;       // this round
-```
+### 6.5 Display
 
-Add to the reset loop at `a_team.c:1975-1995` (match) and `a_team.c:2850-2857` (round), next to
-`resp.kills` / `resp.roundStreakKills`. Optionally extend `gunStats_t` (`g_local.h:1931`) with
-an `assists` member so `stats` output can break assists down per weapon; `ResetStats()`
-(`tng_stats.c:80`) already memsets the whole array, so no extra reset work.
+An `Ast` column next to `Frg` on both teamplay scoreboards that carry per-player frags:
+`A_NewScoreboardMessage()` and the `showExtra` rows of `A_ScoreboardMessage()`. The column
+only appears when `use_assists` is set, so servers with the feature off see a byte-for-byte
+identical scoreboard.
 
-## 7. Telemetry
+Note for server admins: the default matchmode scoreboard lists **names only** - no per-player
+frag column at all - so `use_newscore` must be `1` or higher for the `Frg`/`Ast` columns to
+exist in the first place.
 
-`LogKill()` (`tng_stats.c:980`) writes a single JSON line into a `char msg[1024]`:
+**Why not the live top-right frag counter?** It cannot be done without a protocol change. That
+number is `STAT_FRAGS`, an index into `player_state_old_t.stats[]`, and that array is full:
+`MAX_STATS_OLD` is 32 and the enum in `inc/shared/shared.h` already defines exactly 32 entries
+(0-31, with `STAT_TEAM1_HEADER`/`STAT_TEAM2_HEADER` aliasing indices 30 and 31). Adding a
+sibling number would mean burning a stat slot or moving the game to `player_state_new_t`
+(`MAX_STATS_NEW` 64), which the codebase deliberately does not use. The available route to the
+live counter is `assist_score` - with it set, assists fold into `resp.score` and therefore into
+the top-right number and every other place score is shown.
+
+### 6.6 Layout string budget
+
+`MAX_SCOREBOARD_SIZE` is 1024 and the assist column widens every row by 4 characters, which is
+enough to push a full 8v8 board over the limit. `A_NewScoreboardMessage()` previously had no
+byte budgeting at all - it relied on the numbers happening to fit - so a guard was added that
+drops a row rather than letting `Q_strncatz` cut one in half, and reports the shortfall through
+the existing "..and N more" line.
+
+The guard measures the actual row it is about to append, so with `use_assists 0` the output is
+identical to before for every team size, and with assists on a full 8v8 (16 rows, 1014 bytes)
+still fits. Above 8 players per team the board was already truncated by `MAX_PLAYERS_PER_TEAM`.
+
+`A_ScoreboardMessage()`'s `showExtra` path already budgets properly via `rowChars`, so it just
+needed widened metrics (`TEAM_ROW_CHARS2_AST`, `TEAM_ROW_WIDTH2_AST`).
+
+### 6.7 Telemetry
+
+`LogAssist()` in `tng_stats.c` emits a separate `{"assist":{...}}` record rather than widening
+the `frag` line - the stats consumer is a separate service, and a new record type is a purely
+additive schema change where growing `frag` (already close to its `char msg[1024]` buffer)
+risks tripping strict parsers.
 
 ```json
-{"frag":{"sid":"…","v":"…","k":"…","w":12,"l":2,"ks":3,"ttk":184, …}}
+{"assist":{"sid":"…","mid":"…","a":"…","an":"…","ad":"…","at":2,
+           "v":"…","vn":"…","vt":1,"k":"…","kn":"…","kt":2,
+           "w":2,"d":62,"gm":0,"gmf":0,"t":…,"gt":…,"m":"…","r":3}}
 ```
 
-Two options:
+`a`/`an`/`ad`/`at` are the assister, `v`/`vn`/`vt` the victim, `k`/`kn`/`kt` the killer, `w` the
+means of death the assister last used, `d` the damage they contributed. Consumer-side support
+is external to this repo; until it is added the records land in `action/logs/<logfile_name>.stats`
+like everything else.
 
-1. **Extend the `frag` record** with `"a":[{"s":"<steamid>","n":"<name>","d":142,"w":3}]`.
-   Cheap for consumers to ignore, but the 1024-byte buffer is already fairly full — the assist
-   array must be bounded (`assist_max`) and truncation-safe. Bump `msg` to 2048 while you are
-   there.
-2. **Emit a separate `{"assist":{…}}` record** per assist, reusing the same match/round/server
-   identifiers. Keeps `frag` untouched, easier to version, more lines on the wire.
+## 7. Edge cases and how they are handled
 
-Recommendation: option 2 for the API, since the stats consumer is a separate service and a new
-record type is a strictly additive schema change, whereas widening `frag` risks tripping strict
-parsers.
+* **Bleed-out kills** - handled for free; `Do_Bleeding` routes through `Killed()`.
+* **Friendly fire / teamkills** - `Assist_Award` is not called on the FF branch, and a victim's
+  own teammate can never accumulate credit.
+* **World deaths, suicide, telefrag** - assists require a real `attacker->client` killer that is
+  not the victim, and the call sits inside the existing `MOD_TELEFRAG` guard.
+* **Warmup and round state** - inherited from the `Add_Frag` call sites.
+* **Disconnect and client slot reuse** - the `enterframe` stamp plus an
+  `inuse && client && pers.connected` check.
+* **Healing.** Medkits restore health (`p_view.c`), so some tracked damage can be undone. The
+  shipped behaviour ignores this and relies on `assist_timeout` to expire stale contributions.
+  Making it exact would mean subtracting healed amounts from ledger entries oldest-first at the
+  medkit site; that is a deliberate simplification, not an oversight.
+* **Deathmatch** - `OnSameTeam` returns false without teams, so assists work in plain DM too.
+* **Bots** - unaffected in-game; only stat logging is skipped when `game.ai_ent_found`.
 
-Note `game.ai_ent_found` (`tng_stats.c:900`) disables stat logging entirely when bots are
-present — assists should still function in-game under that condition, only logging is skipped.
+## 8. Tests
 
-## 8. Edge cases worth deciding up front
+`a_assist.c` is a standalone module, so it can be compiled directly against the real headers
+with stubs for the handful of game globals it touches. The harness covers 23 assertions:
 
-* **Bleed-out kills** — handled for free; `Do_Bleeding` routes through `Killed()`.
-* **Healing.** Medkits restore health (`ent->health += medkit_value`, `p_view.c:1279`).
-  Strictly, damage that got healed away should not earn an assist. The simplest defensible rule
-  is to ignore healing and rely on `assist_timeout` to expire stale contributions; if you want
-  it exact, subtract the healed amount from ledger entries oldest-first at `p_view.c:1279`.
-* **Friendly fire / teamkills.** Do not credit assists on the FF path
-  (`p_client.c:1571-1576`), and never credit a victim's own teammate.
-* **World deaths** (`MOD_FALLING`, `MOD_TRIGGER_HURT`, lava…). `push_timeout`
-  (`g_local.h:2317`) already gives an attacker credit for shoving someone off a ledge; whether a
-  third party who softened the victim earns an assist is a design call. Recommend: v1 credits
-  assists only when there is a real `attacker->client` killer, and revisit behind a cvar.
-* **Telefrag.** `Add_Frag` is skipped for `MOD_TELEFRAG` in teamplay (`p_client.c:1578`);
-  assists should follow the same rule.
-* **Suicide.** Killer == victim: no frag, so no assists. Arguably a nearby damager "caused" it;
-  out of scope for v1.
-* **Warmup.** Gate on `in_warmup` exactly like `Add_Frag`/`Add_Death` do.
-* **Bots.** `is_bot` clients have a `client` struct like anyone else — assists work unchanged;
-  only the hit-marker style unicast paths need the existing `!ent->is_bot` guard.
+* the core case - the player who did 90 damage gets the assist, the finisher does not
+* `assist_min_damage` boundary (24 vs 25)
+* `assist_timeout` boundary (exactly on the window vs one frame past)
+* teammates of the victim never earn assists
+* `assist_max` cap, and that it keeps the biggest contributors
+* repeated small hits accumulating into one ledger slot
+* a recycled client slot not inheriting the previous player's credit
+* disconnected assisters skipped
+* eviction of the stalest contributor past `MAX_ASSIST_TRACK`
+* `use_assists 0` and warmup both inert
+* self-damage, world deaths and suicide awarding nothing
+* `assist_score` only touching score when configured
+* assists working in plain deathmatch
 
-## 9. Effort and risk
+The scoreboard byte budget was verified separately by reproducing the layout-string
+construction and confirming (a) byte-for-byte parity with the previous output for every team
+size when `use_assists` is 0, and (b) that no configuration exceeds 1023 bytes with it on.
 
-Roughly 150-250 lines, touching:
+## 9. Files touched
 
-* `src/action/g_local.h` — ledger struct, `resp` counters, prototypes
-* `src/action/g_combat.c` — two `Assist_RecordDamage()` calls in `T_Damage`
-* `src/action/p_client.c` — `Assist_Award()` and its call sites in `ClientObituary()`
-* `src/action/g_save.c` + `src/action/g_main.c` — cvar registration and externs
-* `src/action/a_team.c` — two reset loops
-* `src/action/tng_stats.c` — optional telemetry record
-* `src/action/p_hud.c` — optional ghud assists column
-
-Risk is low and contained: the whole feature is inert with `use_assists 0`, it adds no
-allocation, no protocol change, and no savegame serialisation. The two genuinely external
-pieces are the stats-API schema (a separate service) and any HUD column for the vanilla
-scoreboard, which is constrained by the 1023-byte layout string and the fixed `client` layout
-op.
+| File | Change |
+| --- | --- |
+| `src/action/a_assist.c` | new - `Assist_RecordDamage()`, `Assist_Award()` |
+| `src/action/g_local.h` | `assist_track_t`, `resp.assists`, cvar externs, prototypes, `LOG_ASSIST` |
+| `src/action/g_combat.c` | two `Assist_RecordDamage()` calls in `T_Damage` |
+| `src/action/p_client.c` | two `Assist_Award()` calls in `ClientObituary()` |
+| `src/action/g_main.c`, `g_save.c` | cvar definitions and registration |
+| `src/action/a_team.c` | `Ast` scoreboard column, match reset, layout budget guard |
+| `src/action/tng_stats.c` | `LogAssist()` |
+| `meson.build`, `src/action/Makefile` | build the new module |
+| `doc/action.md`, `action/doc/tngcvar.txt` | admin-facing docs |

@@ -1980,6 +1980,7 @@ void ResetScores (qboolean playerScores)
 
 		ent->client->resp.score = 0;
 		ent->client->resp.kills = 0;
+		ent->client->resp.assists = 0;
 		ent->client->resp.damage_dealt = 0;
 		ent->client->resp.streakHS = 0;
 		ent->client->resp.streakKills = 0;
@@ -3322,6 +3323,8 @@ int G_NotSortedClients( gclient_t **sortedList )
 #define TEAM_ROW_WIDTH		160 //20 chars, name and possible captain tag
 #define TEAM_ROW_CHARS2		44  //yv %d string%c \"%-15s %3d %3d %3d\" "
 #define TEAM_ROW_WIDTH2		216 //27 chars, name Frg Tim Png 
+#define TEAM_ROW_CHARS2_AST	48  //as above plus the assist column
+#define TEAM_ROW_WIDTH2_AST	248 //31 chars, name Frg Ast Tim Png 
 #define TEAM_ROW_GAP		30
 
 // Maximum number of lines of scores to put under each team's header.
@@ -3339,6 +3342,7 @@ void A_NewScoreboardMessage(edict_t * ent)
 	int dead, alive, totalClients, maxPlayers, printCount;
 	gclient_t *cl;
 	edict_t *cl_ent;
+	qboolean showAssists = (use_assists->value != 0);
 
 	// show alive players when dead
 	dead = (!IS_ALIVE(ent) || !team_round_going);
@@ -3354,12 +3358,15 @@ void A_NewScoreboardMessage(edict_t * ent)
 	// print teams
 	for (i = TEAM1; i <= teamCount; i++)
 	{
-		Q_snprintf( buf, sizeof( buf ), "xv 44 yv %d string2 \"%3d %-11.11s Frg Tim Png\"", line++ * lineh, teams[i].score, teams[i].name );
+		Q_snprintf( buf, sizeof( buf ), "xv 44 yv %d string2 \"%3d %-11.11s %s\"", line++ * lineh, teams[i].score, teams[i].name,
+			showAssists ? "Frg Ast Tim Png" : "Frg Tim Png" );
 		Q_strncatz( string, buf, sizeof( string ) );
 
 		Q_snprintf( buf, sizeof( buf ), "xv 44 yv %d string2 \"%s\" ",
 			line++ * lineh,
-			"\x9D\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9F \x9D\x9E\x9F \x9D\x9E\x9F \x9D\x9E\x9F"
+			showAssists
+			? "\x9D\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9F \x9D\x9E\x9F \x9D\x9E\x9F \x9D\x9E\x9F \x9D\x9E\x9F"
+			: "\x9D\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9E\x9F \x9D\x9E\x9F \x9D\x9E\x9F \x9D\x9E\x9F"
 			);
 		Q_strncatz( string, buf, sizeof( string ) );
 
@@ -3392,22 +3399,41 @@ void A_NewScoreboardMessage(edict_t * ent)
 			}
 			#endif
 
-			Q_snprintf( buf, sizeof( buf ), "xv 44 yv %d string%c \"%-15s %3d %3d %3s\"",
-				line++ * lineh,
-				(alive && dead ? '2' : ' '),
-				cl->pers.netname,
-				cl->resp.score,
-				(level.framenum - cl->resp.enterframe) / 600 / FRAMEDIV,
-				pingstr );
+			if (showAssists) {
+				Q_snprintf( buf, sizeof( buf ), "xv 44 yv %d string%c \"%-15s %3d %3d %3d %3s\"",
+					line * lineh,
+					(alive && dead ? '2' : ' '),
+					cl->pers.netname,
+					cl->resp.score,
+					cl->resp.assists,
+					(level.framenum - cl->resp.enterframe) / 600 / FRAMEDIV,
+					pingstr );
+			} else {
+				Q_snprintf( buf, sizeof( buf ), "xv 44 yv %d string%c \"%-15s %3d %3d %3s\"",
+					line * lineh,
+					(alive && dead ? '2' : ' '),
+					cl->pers.netname,
+					cl->resp.score,
+					(level.framenum - cl->resp.enterframe) / 600 / FRAMEDIV,
+					pingstr );
+			}
+
+			// The layout string is a hard MAX_SCOREBOARD_SIZE bytes and the
+			// assist column widens every row. Drop the row rather than let
+			// Q_strncatz cut it in half; players that do fit are unaffected.
+			if (strlen( string ) + strlen( buf ) > MAX_SCOREBOARD_SIZE - 1)
+				break;
+
+			line++;
 			Q_strncatz( string, buf, sizeof( string ) );
 			printCount++;
 			if (printCount >= maxPlayers)
 				break;
 		}
 
-		// show the amount of excess players
-		if (total[i] > MAX_PLAYERS_PER_TEAM) {
-			Q_snprintf( buf, sizeof( buf ), "xv 44 yv %d string \"   ..and %d more\"", line++ * lineh, total[i] - MAX_PLAYERS_PER_TEAM + 1 );
+		// show the amount of excess players, whether we ran out of rows or bytes
+		if (printCount < total[i] && strlen( string ) + 40 <= MAX_SCOREBOARD_SIZE - 1) {
+			Q_snprintf( buf, sizeof( buf ), "xv 44 yv %d string \"   ..and %d more\"", line++ * lineh, total[i] - printCount );
 			Q_strncatz( string, buf, sizeof( string ) );
 		}
 
@@ -3448,6 +3474,7 @@ void A_ScoreboardMessage (edict_t * ent, edict_t * killer)
 		char temp[16];
 		int maxPlayersPerTeam, scoreWidth = 3, rowWidth, rowChars, rowGap, headerOffset = 0;
 		int maxPlayers, printCount, base_x, showExtra = 0, subLines = 0;
+		qboolean showAssists = (use_assists->value != 0);
 
 		// new scoreboard for regular teamplay up to 16 players
 		if (use_newscore->value == 1 && teamplay->value && !matchmode->value && !ctf->value) {
@@ -3457,8 +3484,13 @@ void A_ScoreboardMessage (edict_t * ent, edict_t * killer)
 
 		if (use_newscore->value > 1 && teamCount < 3) {
 			showExtra = 1;
-			rowWidth = max(TEAM_HEADER_WIDTH, TEAM_ROW_WIDTH2);
-			rowChars = TEAM_ROW_CHARS2;
+			if (showAssists) {
+				rowWidth = max(TEAM_HEADER_WIDTH, TEAM_ROW_WIDTH2_AST);
+				rowChars = TEAM_ROW_CHARS2_AST;
+			} else {
+				rowWidth = max(TEAM_HEADER_WIDTH, TEAM_ROW_WIDTH2);
+				rowChars = TEAM_ROW_CHARS2;
+			}
 			rowGap = TEAM_ROW_GAP;
 		} else {
 			rowWidth = max(TEAM_HEADER_WIDTH, TEAM_ROW_WIDTH);
@@ -3624,7 +3656,8 @@ void A_ScoreboardMessage (edict_t * ent, edict_t * killer)
 			len = strlen(string);
 			
 			if (showExtra) {
-				sprintf( string + len, "yv %d string2 \"Name            Frg Tim Png\" ", line_y );
+				sprintf( string + len, "yv %d string2 \"Name            %s\" ", line_y,
+					showAssists ? "Frg Ast Tim Png" : "Frg Tim Png" );
 				len = strlen( string );
 				line_y += 8;
 			}
@@ -3682,7 +3715,17 @@ void A_ScoreboardMessage (edict_t * ent, edict_t * killer)
 						}
 					}
 					#endif
-					if (showExtra) {
+					if (showExtra && showAssists) {
+						sprintf( string + len,
+							"yv %d string%s \"%-15s %3d %3d %3d %3s\" ",
+							line_y,
+							(deadview && cl_ent->solid != SOLID_NOT) ? "2" : "",
+							playername,
+							cl->resp.score,
+							cl->resp.assists,
+							(level.framenum - cl->resp.enterframe) / (60 * HZ),
+							pingstr );
+					} else if (showExtra) {
 						sprintf( string + len,
 							"yv %d string%s \"%-15s %3d %3d %3s\" ",
 							line_y,

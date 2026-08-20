@@ -643,6 +643,14 @@ void InitGame( void )
 	sv_idleremove = gi.cvar("sv_idleremove", "0", CVAR_SERVERINFO_EXT);
 	g_spawn_items = gi.cvar("g_spawn_items", "0", CVAR_LATCH);
 
+	// Kill assists
+	use_assists = gi.cvar("use_assists", "0", CVAR_SERVERINFO_EXT);
+	assist_timeout = gi.cvar("assist_timeout", "10", CVAR_SERVERINFO_EXT);
+	assist_min_damage = gi.cvar("assist_min_damage", "25", CVAR_SERVERINFO_EXT);
+	assist_score = gi.cvar("assist_score", "0", CVAR_SERVERINFO_EXT);
+	assist_max = gi.cvar("assist_max", "2", CVAR_SERVERINFO_EXT);
+	assist_announce = gi.cvar("assist_announce", "1", CVAR_SERVERINFO_EXT);
+
 	// 2023
 	use_killcounts = gi.cvar("use_killcounts", "0", CVAR_SERVERINFO_EXT);
 	zoom_comp = gi.cvar("zoom_comp", "1", CVAR_SERVERINFO_EXT);

@@ -1136,6 +1136,78 @@ void LogKill(edict_t *self, edict_t *inflictor, edict_t *attacker)
 
 /*
 ==================
+LogAssist
+
+Emitted as its own record rather than widened into the "frag" line: the stats
+consumer is a separate service, and a new record type is a purely additive
+schema change where growing "frag" is not.
+=================
+*/
+void LogAssist(edict_t *ent, edict_t *victim, edict_t *killer, int damage, int mod)
+{
+	int gametime, eventtime, roundNum;
+	char msg[1024];
+	char a[24];		// Assister's Steam ID
+	char an[128];	// Assister's name
+	char ad[24];	// Assister's Discord ID
+	char v[24];		// Victim's Steam ID
+	char vn[128];	// Victim's name
+	char k[24];		// Killer's Steam ID
+	char kn[128];	// Killer's name
+
+	// Check if there's an AI bot in the game, if so, do nothing
+	if (game.ai_ent_found)
+		return;
+	// If stats aren't enabled, do nothing
+	if (!stat_logs->value)
+		return;
+	if (!ent || !ent->client || !victim || !victim->client || !killer || !killer->client)
+		return;
+
+	if (!((team_round_going && !in_warmup) || (gameSettings & GS_DEATHMATCH)))
+		return;
+
+	Q_strncpyz(a, Info_ValueForKey(ent->client->pers.userinfo, "steamid"), sizeof(a));
+	Q_strncpyz(an, Info_ValueForKey(ent->client->pers.userinfo, "name"), sizeof(an));
+	Q_strncpyz(ad, Info_ValueForKey(ent->client->pers.userinfo, "cl_discord_id"), sizeof(ad));
+	Q_strncpyz(v, Info_ValueForKey(victim->client->pers.userinfo, "steamid"), sizeof(v));
+	Q_strncpyz(vn, Info_ValueForKey(victim->client->pers.userinfo, "name"), sizeof(vn));
+	Q_strncpyz(k, Info_ValueForKey(killer->client->pers.userinfo, "steamid"), sizeof(k));
+	Q_strncpyz(kn, Info_ValueForKey(killer->client->pers.userinfo, "name"), sizeof(kn));
+
+	gametime = level.matchTime;
+	eventtime = (int)time(NULL);
+	roundNum = game.roundNum + 1;
+
+	Q_snprintf(
+		msg, sizeof(msg),
+		"{\"assist\":{\"sid\":\"%s\",\"mid\":\"%s\",\"a\":\"%s\",\"an\":\"%s\",\"ad\":\"%s\",\"at\":%i,\"v\":\"%s\",\"vn\":\"%s\",\"vt\":%i,\"k\":\"%s\",\"kn\":\"%s\",\"kt\":%i,\"w\":%i,\"d\":%i,\"gm\":%i,\"gmf\":%i,\"t\":%d,\"gt\":%d,\"m\":\"%s\",\"r\":%i}}\n",
+		server_id->string,
+		game.matchid,
+		a,
+		an,
+		ad,
+		ent->client->resp.team,
+		v,
+		vn,
+		victim->client->resp.team,
+		k,
+		kn,
+		killer->client->resp.team,
+		mod,
+		damage,
+		Gamemode(),
+		Gamemodeflag(),
+		eventtime,
+		gametime,
+		level.mapname,
+		roundNum
+	);
+	Write_Stats(msg);
+}
+
+/*
+==================
 LogWorldKill
 =================
 */

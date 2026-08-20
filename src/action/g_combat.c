@@ -881,6 +881,8 @@ void T_Damage (edict_t * targ, edict_t * inflictor, edict_t * attacker, const ve
 						attacker->client->damage_dealt += take + psave + asave;
 					}
 			
+				Assist_RecordDamage(targ, attacker, damage, mod);
+
 				client->attacker = attacker;
 				client->attacker_mod = mod;
 				client->attacker_loc = damage_type;
@@ -950,6 +952,8 @@ void T_Damage (edict_t * targ, edict_t * inflictor, edict_t * attacker, const ve
 					attacker->client->resp.gunstats[mod].damage += damage;
 				}
 			}
+
+			Assist_RecordDamage(targ, attacker, damage, mod);
 
 			client->attacker = attacker;
 			client->attacker_mod = mod;

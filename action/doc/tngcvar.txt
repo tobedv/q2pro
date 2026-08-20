@@ -68,6 +68,14 @@ check_time "3"
 use_warnings "1"
 use_rewards "1"
 
+// Kill Assists
+use_assists "0"
+assist_timeout "10"
+assist_min_damage "25"
+assist_score "0"
+assist_max "2"
+assist_announce "1"
+
 // Rotation Modes
 rrot "0"
 vrot "0"

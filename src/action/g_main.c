@@ -559,6 +559,14 @@ cvar_t *gmf;
 cvar_t *sv_idleremove;
 cvar_t *g_spawn_items;
 
+// Kill assists
+cvar_t *use_assists;        // Master switch for the kill assist system
+cvar_t *assist_timeout;     // Seconds since an assister's last hit for it to still count
+cvar_t *assist_min_damage;  // Minimum accumulated damage to earn an assist
+cvar_t *assist_score;       // Score points awarded per assist (0 leaves scoring untouched)
+cvar_t *assist_max;         // Maximum assists credited for a single kill
+cvar_t *assist_announce;    // Print assist messages
+
 // 2023
 cvar_t *use_killcounts;  // Display kill counts in console to clients on frag
 cvar_t *zoom_comp; // Compensates zoom-in frames with ping (high ping = fewer frames)

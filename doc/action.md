@@ -500,6 +500,29 @@ The announcer that says "Lights, Camera, Action!" has his vocabulary increased b
   - `use_rewards [0/1]` - When on (1), it will play the sounds on rewards such as "Impressive".
   - `use_killcounts [0/1]` - When on (1), server will announce kill counts.
 
+### Kill Assists
+AQ2 gives the frag to whoever lands the last hit. Because most weapons deal their damage
+through the bleed pool rather than instantly, that is frequently not the player who did the
+work - doing 90 of the 100 damage and getting nothing on the scoreboard is routine. When
+assists are enabled the server remembers who hurt each player during their current life and
+credits the contributors when somebody else finishes them.
+
+An `Ast` column appears next to `Frg` on the teamplay scoreboard (this requires
+`use_newscore 1` or higher, since the default board lists names only). The assister and the
+player who got the kill each get a short console line; nobody else is spammed.
+
+Assists are off by default, and even when enabled they do not touch scoring unless
+`assist_score` is set - so a server can collect the stat before deciding whether it should
+count for anything.
+
+#### Commands
+- `use_assists [0/1]` - When on (1), enables kill assists. Default is 0.
+- `assist_timeout [seconds]` - How long after hitting someone you can still earn an assist for their death. Default is 10.
+- `assist_min_damage [damage]` - Minimum damage you must have done to that player to qualify. Default is 25, roughly a quarter of a player's health.
+- `assist_score [points]` - Score awarded per assist. Default is 0, which leaves scoring exactly as it is today.
+- `assist_max [count]` - Maximum assists credited for a single kill, biggest contributors first. Default is 2.
+- `assist_announce [0/1]` - When on (1), print the console lines described above. Default is 1.
+
 ### Kevlar Helmet
 A new item, the Kevlar Helmet acts like the Kevlar Vest does, only it protects the head of the player wearing it. To disable it, use item banning.
 

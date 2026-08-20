@@ -1414,6 +1414,14 @@ extern cvar_t *esp_debug; // Enable or disable debug mode (very spammy)
 
 // END AQ2 ETE
 
+// Kill assists
+extern cvar_t *use_assists;        // Master switch for the kill assist system
+extern cvar_t *assist_timeout;     // Seconds since an assister's last hit for it to still count
+extern cvar_t *assist_min_damage;  // Minimum accumulated damage to earn an assist
+extern cvar_t *assist_score;       // Score points awarded per assist (0 leaves scoring untouched)
+extern cvar_t *assist_max;         // Maximum assists credited for a single kill
+extern cvar_t *assist_announce;    // Print assist messages
+
 // 2023
 extern cvar_t *use_killcounts;  // Adjust how kill streaks are counted
 extern cvar_t *zoom_comp;  // Enable or disable zoom compensation
@@ -1883,6 +1891,8 @@ void LogCapture(edict_t *capturer);
 void LogMatch(void);
 #define LOG_AWARD(ent, award) LogAward(ent, award)
 void LogAward(edict_t *ent, int award);
+#define LOG_ASSIST(ent, victim, killer, damage, mod) LogAssist(ent, victim, killer, damage, mod)
+void LogAssist(edict_t *ent, edict_t *victim, edict_t *killer, int damage, int mod);
 #define LOG_END_MATCH_STATS() LogEndMatchStats()
 void LogEndMatchStats(void);
 #else
@@ -1892,6 +1902,7 @@ void LogEndMatchStats(void);
 #define LOG_CAPTURE(capturer)
 #define LOG_MATCH()
 #define LOG_AWARD(ent, award)
+#define LOG_ASSIST(ent, victim, killer, damage, mod)
 #define LOG_END_MATCH_STATS()
 #endif
 
@@ -1927,6 +1938,20 @@ typedef enum {
 } layout_t;
 
 #define GENDER_STR( ent, he, she, it ) (((ent)->client->pers.gender == GENDER_MALE) ? he : (((ent)->client->pers.gender == GENDER_FEMALE) ? she : it))
+
+// Kill assists: per-life ledger of who damaged us, kept on the victim.
+// Sized for the 8v8 upper bound of AQ2 team games; a 5v5 round can at most
+// fill 5 slots, so eviction is effectively unreachable in normal play.
+#define MAX_ASSIST_TRACK 8
+
+typedef struct assist_track_s
+{
+	edict_t	*attacker;		// who hurt us, NULL for an empty slot
+	int		enterframe;		// attacker's resp.enterframe, guards against client slot reuse
+	int		damage;			// effective damage they have dealt us this life
+	int		last_framenum;	// level.framenum of their most recent hit
+	int		mod;			// their most recent means of death
+} assist_track_t;
 
 typedef struct gunStats_s
 {
@@ -2022,6 +2047,8 @@ typedef struct
   int kills;			// real kills
 
   int deaths;			// deaths
+
+  int assists;			// kill assists this match
 
   int damage_dealt;		// keep track of damage dealt by player to other players
 
@@ -2318,6 +2345,10 @@ struct gclient_s
 	int			last_damaged_part;
 	char		last_damaged_players[256];
 	edict_t		*last_killed_target[MAX_LAST_KILLED];
+
+	// who has damaged us this life, for awarding kill assists.
+	// Cleared for free by the PutClientInServer() memset on every respawn.
+	assist_track_t	assist_track[MAX_ASSIST_TRACK];
 
 	int			uvTime;
   
@@ -2955,6 +2986,8 @@ void Killed (edict_t * targ, edict_t * inflictor, edict_t * attacker,
 void Add_Frag(edict_t * ent, int mod);
 void Subtract_Frag (edict_t * ent);
 void Add_Death( edict_t *ent, qboolean end_streak );
+void Assist_RecordDamage(edict_t * targ, edict_t * attacker, int damage, int mod);
+void Assist_Award(edict_t * victim, edict_t * killer);
 
 void PrintDeathMessage(char *msg, edict_t * gibee);
 

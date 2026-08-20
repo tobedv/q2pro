@@ -164,6 +164,7 @@ game_src = [
 
 action_src = [
   'src/action/a_cmds.c',
+  'src/action/a_assist.c',
   'src/action/a_ctf.c',
   'src/action/a_dom.c',
   'src/action/a_doorkick.c',

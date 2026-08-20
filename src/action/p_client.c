@@ -1203,6 +1203,7 @@ void ClientObituary(edict_t * self, edict_t * inflictor, edict_t * attacker)
 			else
 			{
 				Add_Frag(self->client->attacker, MOD_UNKNOWN);
+				Assist_Award(self, self->client->attacker);
 				Add_Death( self, true );
 			}
 
@@ -1577,6 +1578,7 @@ void ClientObituary(edict_t * self, edict_t * inflictor, edict_t * attacker)
 			} else {
 				if (!teamplay->value || mod != MOD_TELEFRAG) {
 					Add_Frag(attacker, mod);
+					Assist_Award(self, attacker);
 					attacker->client->radio_num_kills++;
 					Add_Death( self, true );
 				}
