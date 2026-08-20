@@ -1515,25 +1515,11 @@ bool CL_XerpFireSuppress(void)
     // an own-fire echo during a raise hold proves the server can already
     // fire — the hold was a false positive (or the raise ended early), so
     // cancel it instead of suppressing predictions for the full window
+    // (the takeover absorption below then keeps it from double-banging)
     if (xf.raise_until && now < xf.raise_until) {
         xf.raise_until = 0;
         if (XF_VERBOSE)
             XF_LOG("raise hold canceled - server is firing\n");
-        // if the trigger is held, the freed stream re-bangs within one
-        // phys frame — absorb this echo instead of letting it double the
-        // spray start (the audible round-start double: canceling echo
-        // plus the first prediction ~50 ms apart). A lone click keeps
-        // the echo, else its shot would go silent.
-        if (xf.prev_attack) {
-            const xf_weapon_t *held = xf_find_weapon(false);
-
-            if (held && (held->mz_weapon == mz.weapon ||
-                         mz.weapon == MZ_MACHINEGUN)) {
-                if (XF_VERBOSE)
-                    XF_LOG("echo absorbed at hold cancel - stream takes over\n");
-                return true;
-            }
-        }
     }
     while (xf.tail != xf.head &&
            now - xf.pending[xf.tail % XF_PENDING_MAX].time > XF_ECHO_WINDOW) {
@@ -1571,13 +1557,39 @@ bool CL_XerpFireSuppress(void)
     // — field report: overlapping "double M4" streams in duels. Absorb it;
     // the predicted rhythm IS the stream. Echoes outside any predicted
     // stream (silencer, knife, cold shots) still play normally.
-    if (xf.last_fire && now - xf.last_fire <= XF_ECHO_WINDOW) {
+    {
         const xf_weapon_t *held = xf_find_weapon(false);
+        bool class_match = held && (held->mz_weapon == mz.weapon ||
+                                    mz.weapon == MZ_MACHINEGUN);
 
-        if (held && (held->mz_weapon == mz.weapon ||
-                     mz.weapon == MZ_MACHINEGUN)) {
+        if (class_match &&
+            xf.last_fire && now - xf.last_fire <= XF_ECHO_WINDOW) {
             if (XF_VERBOSE)
                 XF_LOG("echo absorbed unpaired (mz %d) - desynced twin\n",
+                       mz.weapon);
+            return true;
+        }
+
+        // takeover absorption: the trigger is held on a full-auto weapon
+        // and nothing in THIS packet's state blocks prediction any more —
+        // the stream is guaranteed to re-bang within one phys frame, so
+        // this echo would only double the takeover. Field cases: the
+        // reload-resume double (the server fires the first post-reload
+        // shot in the same frame that first reports the refilled mag —
+        // unpredictable by causality) and the raise-hold cancel above.
+        // Semi-auto and mirrored-burst weapons are excluded: their next
+        // bang needs a fresh click or burst window and is NOT guaranteed,
+        // and a wrongly absorbed echo would mean a silent shot.
+        if (class_match && xf.prev_attack &&
+            cl.frame.ps.pmove.pm_type == PM_NORMAL &&
+            now >= xf.raise_until &&
+            held->automatic &&
+            !(held->mz_weapon == MZ_ROCKET && xf_mode.m4_burst) &&
+            !(held->mz_weapon == MZ_MACHINEGUN && xf_mode.mp5_burst) &&
+            !(xf_mode.mk23_semi && !strcmp(held->name, "mk23")) &&
+            cl.frame.ps.stats[STAT_AMMO] - (int)(xf.head - xf.tail) > 0) {
+            if (XF_VERBOSE)
+                XF_LOG("echo absorbed (mz %d) - stream takes over next frame\n",
                        mz.weapon);
             return true;
         }
