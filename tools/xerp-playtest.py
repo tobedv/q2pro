@@ -33,7 +33,7 @@ SESSION = re.compile(r"^=== session ([\d-]+ [\d:]+), (.+)$")
 MAP = re.compile(r"=== map (\S+) @ (\S+)")
 SETTINGS = re.compile(
     r'=== settings fire=(\d+) cut=([\d.]+) weapons="([^"]*)" ents=([\d.]+) '
-    r"minspeed=(\d+) cancel=(\d+)")
+    r"minspeed=(\d+)")
 PRED = re.compile(r"predicted (\w+)")
 ECHO_MS = re.compile(r"click-to-echo (\d+) ms")
 XERPENTS = re.compile(
@@ -111,7 +111,7 @@ def parse_xerp(path):
             cur_settings = {
                 "fire": int(sm.group(1)), "cut": float(sm.group(2)),
                 "weapons": sm.group(3), "ents": float(sm.group(4)),
-                "minspeed": int(sm.group(5)), "cancel": int(sm.group(6))}
+                "minspeed": int(sm.group(5))}
             if seg and not seg.empty():
                 new_seg(seg.map, seg.server, t)   # dial change mid-map
             elif seg:

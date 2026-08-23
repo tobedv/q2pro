@@ -2779,8 +2779,6 @@ static void CL_InitLocal(void)
     cl_xerp_fire_weapons = Cvar_Get("cl_xerp_fire_weapons", "all", 0);
     cl_xerp_fire_weapons->changed = CL_XerpFireWeaponsChanged;
     CL_XerpFireWeaponsChanged(cl_xerp_fire_weapons);
-    cl_xerp_kick_cancel = Cvar_Get("cl_xerp_kick_cancel", "0", 0);
-    cl_xerp_kick_cancel->changed = CL_XerpSettingsChanged;
     cl_xerp_ents = Cvar_Get("cl_xerp_ents", "0", 0);
     cl_xerp_ents_minspeed = Cvar_Get("cl_xerp_ents_minspeed", "120", 0);
     cl_xerp_ents_minspeed->changed = CL_XerpSettingsChanged;
