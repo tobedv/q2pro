@@ -85,6 +85,7 @@
     - [cl\_xerp\_debug](#cl_xerp_debug)
     - [cl\_xerp\_fire](#cl_xerp_fire)
     - [cl\_xerp\_fire\_cut](#cl_xerp_fire_cut)
+    - [cl\_xerp\_fire\_weapons](#cl_xerp_fire_weapons)
     - [cl\_xerp\_zoom](#cl_xerp_zoom)
     - [cl\_xerp\_ents](#cl_xerp_ents)
     - [cl\_xerp\_buffer](#cl_xerp_buffer)
@@ -935,6 +936,15 @@ a lifetime of muscle memory is calibrated to the old delay: the dial
 lets the earliness be walked in gradually (`1 → 0.75 → 0.5`), exactly
 like the `cl_xerp_ents` strength dial does for extrapolation. Default
 value is 1.
+
+### cl\_xerp\_fire\_weapons  
+Which weapons `cl_xerp_fire` predicts: a space-separated list of weapon
+names out of `mk23 mp5 m4 m3 hc akimbo ssg`, or `all`. A weapon outside
+the list behaves fully classic — no predicted bang, no echo handling,
+and its recoil/kick mirror stays inert, so its rendered kick is
+bit-for-bit server-timed. Lets prediction be adopted per weapon class
+(single-shot weapons take to it readily; predicted spray divides
+opinion). Default value is `all`.
 
 ### cl\_xerp\_zoom (removed)  
 Predicted sniper zoom was built and removed after field data showed

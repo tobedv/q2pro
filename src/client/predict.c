@@ -322,6 +322,7 @@ remain fully server-authoritative — this cannot create or remove a hit.
 
 cvar_t *cl_xerp_fire;
 cvar_t *cl_xerp_fire_cut;
+cvar_t *cl_xerp_fire_weapons;
 
 // All xerp telemetry is written to its own file, logs/xerp.log, instead of
 // the console — full per-shot data without drowning out chat and game
@@ -471,6 +472,59 @@ static const xf_weapon_t xf_weapons[] = {
     // tried, invalidated by field data, and removed.
     // Absent on purpose: knife and grenades keep server-echo behavior.
 };
+
+/*
+Per-weapon opt-in (cl_xerp_fire_weapons): a space-separated list of the
+names above, or "all". A weapon outside the list is fully classic — no
+predicted bang, no echo absorption of any kind, and its recoil/kick
+mirror stays inert so the rendered kick is bit-for-bit server-timed.
+Field-motivated: prediction earns its keep differently per weapon class
+(single-shot weapons take to it, sprays divide opinion), and tradition
+is a per-player choice.
+*/
+static unsigned xf_weapon_mask = ~0u;
+
+static bool xf_enabled(const xf_weapon_t *w)
+{
+    return xf_weapon_mask & (1u << (w - xf_weapons));
+}
+
+// by muzzleflash code — only unambiguous codes (M4/M3/HC) are queried
+static bool xf_enabled_mz(int mz_weapon)
+{
+    unsigned i;
+
+    for (i = 0; i < q_countof(xf_weapons); i++)
+        if (xf_weapons[i].mz_weapon == mz_weapon)
+            return xf_weapon_mask & (1u << i);
+    return false;
+}
+
+void CL_XerpFireWeaponsChanged(cvar_t *self)
+{
+    char buf[256], *tok;
+    unsigned i;
+    bool known;
+
+    if (!self->string[0] || !Q_stricmp(self->string, "all")) {
+        xf_weapon_mask = ~0u;
+        return;
+    }
+    xf_weapon_mask = 0;
+    Q_strlcpy(buf, self->string, sizeof(buf));
+    for (tok = strtok(buf, " ,"); tok; tok = strtok(NULL, " ,")) {
+        known = false;
+        for (i = 0; i < q_countof(xf_weapons); i++) {
+            if (!Q_stricmp(tok, xf_weapons[i].name)) {
+                xf_weapon_mask |= 1u << i;
+                known = true;
+            }
+        }
+        if (!known)
+            Com_WPrintf("%s: unknown weapon '%s' (valid: mk23 mp5 m4 m3 "
+                        "hc akimbo ssg, or 'all')\n", self->name, tok);
+    }
+}
 
 // identify the held weapon: primary source is the own player entity's vwep
 // index (skinnum high bits), which is always present; ps.gunindex is only a
@@ -875,6 +929,8 @@ void CL_XerpKickEcho(void)
     // M3 / handcannon: one fixed -2 impulse rides the frame that carries
     // this flash (these MZ codes are never collapsed by llsound 0)
     if (mz.weapon == MZ_SHOTGUN || mz.weapon == MZ_SSHOTGUN) {
+        if (!xf_enabled_mz(mz.weapon))
+            return;                 // opted out: kick stays server-timed
         xki_set(cl.frame.number, XKI_PITCH);
         xki.flash_time = cls.realtime;
         if (SCR_XerpDebugLevel() >= 2 && xki.gen_time &&
@@ -897,6 +953,8 @@ void CL_XerpKickEcho(void)
     }
     if (xf_mode.m4_burst)
         return;                     // burst mode climbs nothing
+    if (!xf_enabled_mz(MZ_ROCKET))
+        return;                     // M4 opted out: climb stays server-timed
 
     if (!xka.shots) {
         xka.spray_start = cls.realtime;
@@ -1190,7 +1248,8 @@ bool CL_XerpFireSoundSuppress(void)
     for (i = 0; i < q_countof(fire_wavs); i++) {
         if (strcmp(name, fire_wavs[i].wav))
             continue;
-        if (held && held->mz_weapon == fire_wavs[i].mz_weapon) {
+        if (held && xf_enabled(held) &&
+            held->mz_weapon == fire_wavs[i].mz_weapon) {
             if (XF_VERBOSE)
                 XF_LOG("svc_sound absorbed (%s) - llsound 0 twin\n", name);
             return true;
@@ -1351,6 +1410,13 @@ void CL_XerpFireCheck(bool attack)
         xf.last_widx = (int)(w - xf_weapons);
         if (!first && xf.raise_until < now + 900)
             xf.raise_until = now + 900;
+    }
+    // per-weapon opt-in comes after switch tracking, so switching through
+    // an excluded weapon still arms the raise hold for the way back
+    if (!xf_enabled(w)) {
+        if (edge && XF_VERBOSE)
+            XF_LOG("skip: %s not in cl_xerp_fire_weapons\n", w->name);
+        return;
     }
     if (now < xf.raise_until) {
         // log once per hold window, held streams included — silent
@@ -1559,8 +1625,10 @@ bool CL_XerpFireSuppress(void)
     // stream (silencer, knife, cold shots) still play normally.
     {
         const xf_weapon_t *held = xf_find_weapon(false);
-        bool class_match = held && (held->mz_weapon == mz.weapon ||
-                                    mz.weapon == MZ_MACHINEGUN);
+        // an opted-out weapon's echoes ARE its bangs — never absorb them
+        bool class_match = held && xf_enabled(held) &&
+                           (held->mz_weapon == mz.weapon ||
+                            mz.weapon == MZ_MACHINEGUN);
 
         if (class_match &&
             xf.last_fire && now - xf.last_fire <= XF_ECHO_WINDOW) {

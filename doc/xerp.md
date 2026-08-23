@@ -228,6 +228,7 @@ second, but meant for focused validation runs, not matches.
 |---|---|---|
 | `cl_xerp_fire` | 0 / 1 / 2 | instant own-fire feedback; 2 adds per-shot logging |
 | `cl_xerp_fire_cut` | 0.0 – 1.0 | fraction of the echo latency the predicted bang cuts away (1 = at the click) |
+| `cl_xerp_fire_weapons` | names / `all` | which weapons are predicted (`mk23 mp5 m4 m3 hc akimbo ssg`); excluded ones stay fully classic |
 | `cl_xerp_ents` | 0.0 – 1.0 | player extrapolation strength dial |
 | `cl_xerp_ents_minspeed` | ups, default 120 | full lead at this speed, fading to none at half of it |
 | `cl_xerp_debug` | 0 – 4 | off / overlay / + `logs/xerp.log` telemetry / + per-frame recoil trace / telemetry without overlay (play mode) |
