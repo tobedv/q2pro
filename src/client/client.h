@@ -878,6 +878,8 @@ void CL_XerpFireClear(void);
 void CL_XerpFireCheck(bool attack);
 void CL_XerpFireService(void);
 void CL_XerpFireWeaponsChanged(cvar_t *self);
+void CL_XerpLogSettings(const char *why);
+void CL_XerpSettingsChanged(cvar_t *self);
 bool CL_XerpFireSuppress(void);
 void CL_XerpFireZoomChanged(void);
 void CL_XerpFireModeToggle(void);

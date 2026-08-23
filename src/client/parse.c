@@ -1455,6 +1455,7 @@ void CL_XerpEntsChanged(cvar_t *self)
 
 	if (var && (var->flags & CVAR_SYNC))
 		CL_SendCvarSync(var);
+	CL_XerpSettingsChanged(self);
 }
 #endif
 

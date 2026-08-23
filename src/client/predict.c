@@ -366,6 +366,30 @@ void CL_XerpLog(const char *fmt, ...)
         FS_Write(line, len, xerp_logfile);
 }
 
+/*
+Settings lines in the telemetry: analytics over weeks of playtests need
+to know which dials were live when — logged at every map start and on
+every change of a cl_xerp_* dial, so the ingest tool
+(tools/xerp-playtest.py) can segment results by configuration.
+*/
+void CL_XerpLogSettings(const char *why)
+{
+    if (!cl_xerp_fire || !cl_xerp_fire_cut || !cl_xerp_fire_weapons ||
+        !cl_xerp_kick_cancel || !cl_xerp_ents || !cl_xerp_ents_minspeed)
+        return;                     // still registering at startup
+    CL_XerpLog("=== settings fire=%d cut=%.2f weapons=\"%s\" ents=%.2f "
+               "minspeed=%d cancel=%d (%s)\n",
+               cl_xerp_fire->integer, cl_xerp_fire_cut->value,
+               cl_xerp_fire_weapons->string, cl_xerp_ents->value,
+               cl_xerp_ents_minspeed->integer,
+               cl_xerp_kick_cancel->integer, why);
+}
+
+void CL_XerpSettingsChanged(cvar_t *self)
+{
+    CL_XerpLogSettings(self->name);
+}
+
 // cl_xerp_fire 2: log every fire decision to logs/xerp.log
 #define XF_VERBOSE  (cl_xerp_fire->integer >= 2)
 
@@ -525,6 +549,7 @@ void CL_XerpFireWeaponsChanged(cvar_t *self)
             Com_WPrintf("%s: unknown weapon '%s' (valid: mk23 mp5 m4 m3 "
                         "hc akimbo ssg, or 'all')\n", self->name, tok);
     }
+    CL_XerpLogSettings(self->name);
 }
 
 // identify the held weapon: primary source is the own player entity's vwep
@@ -1220,6 +1245,7 @@ void CL_XerpFireClear(void)
 
     // level marker, so multi-game logs segment by map and server
     CL_XerpLog("=== map %s @ %s\n", cl.mapname, cls.servername);
+    CL_XerpLogSettings("map start");
 }
 
 /*

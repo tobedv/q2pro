@@ -2773,13 +2773,17 @@ static void CL_InitLocal(void)
     cl_noskins->changed = cl_noskins_changed;
     cl_predict = Cvar_Get("cl_predict", "1", 0);
     cl_xerp_fire = Cvar_Get("cl_xerp_fire", "0", 0);
+    cl_xerp_fire->changed = CL_XerpSettingsChanged;
     cl_xerp_fire_cut = Cvar_Get("cl_xerp_fire_cut", "1", 0);
+    cl_xerp_fire_cut->changed = CL_XerpSettingsChanged;
     cl_xerp_fire_weapons = Cvar_Get("cl_xerp_fire_weapons", "all", 0);
     cl_xerp_fire_weapons->changed = CL_XerpFireWeaponsChanged;
     CL_XerpFireWeaponsChanged(cl_xerp_fire_weapons);
     cl_xerp_kick_cancel = Cvar_Get("cl_xerp_kick_cancel", "0", 0);
+    cl_xerp_kick_cancel->changed = CL_XerpSettingsChanged;
     cl_xerp_ents = Cvar_Get("cl_xerp_ents", "0", 0);
     cl_xerp_ents_minspeed = Cvar_Get("cl_xerp_ents_minspeed", "120", 0);
+    cl_xerp_ents_minspeed->changed = CL_XerpSettingsChanged;
 #ifdef PROTOCOL_VERSION_AQTION_CVARSYNC
     cl_xerp_ents->changed = CL_XerpEntsChanged;
 #endif
