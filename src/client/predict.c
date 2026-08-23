@@ -647,6 +647,14 @@ static void xf_learn_cadence(int widx, unsigned now)
             } else {
                 xf_cad[widx].cycle = old * 0.95f + interval * 0.05f;
                 xf_cad[widx].pending_short = 0;
+                // manual weapons: the gap between deliberate shots is the
+                // player's aim rhythm, not the server's cycle — field bug:
+                // the SSG estimate random-walked 1400 -> 1799 ms across a
+                // session and began withholding legit quick re-shots. Up-
+                // drift is capped at the field-measured prior; a too-low
+                // prior still self-heals through the echo watchdog.
+                if (!w->automatic && xf_cad[widx].cycle > w->refire)
+                    xf_cad[widx].cycle = w->refire;
             }
             xf_cad[widx].samples++;
             if (XF_VERBOSE && fabsf(xf_cad[widx].cycle - old) >= 5)
@@ -1645,6 +1653,11 @@ bool CL_XerpFireSuppress(void)
             if (XF_VERBOSE)
                 XF_LOG("echo absorbed unpaired (mz %d) - desynced twin\n",
                        mz.weapon);
+            // an absorbed echo is a real server fire: it must feed the
+            // cadence learner (field bug: mk23 taps the server accepted
+            // faster than the 399 ms gate were absorbed here, so the
+            // too-slow estimate never saw the proof it was wrong)
+            xf_learn_cadence((int)(held - xf_weapons), now);
             return true;
         }
 
@@ -1669,8 +1682,15 @@ bool CL_XerpFireSuppress(void)
             if (XF_VERBOSE)
                 XF_LOG("echo absorbed (mz %d) - stream takes over next frame\n",
                        mz.weapon);
+            xf_learn_cadence((int)(held - xf_weapons), now);
             return true;
         }
+
+        // opted-out weapon firing classic: expected, not worth a log line
+        // per shot (a whole M4 session is thousands of them)
+        if (held && !xf_enabled(held) &&
+            (held->mz_weapon == mz.weapon || mz.weapon == MZ_MACHINEGUN))
+            return false;
     }
 
     if (XF_VERBOSE)
