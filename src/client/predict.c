@@ -323,6 +323,7 @@ remain fully server-authoritative — this cannot create or remove a hit.
 cvar_t *cl_xerp_fire;
 cvar_t *cl_xerp_fire_cut;
 cvar_t *cl_xerp_fire_weapons;
+cvar_t *cl_xerp_kick_cancel;
 
 // All xerp telemetry is written to its own file, logs/xerp.log, instead of
 // the console — full per-shot data without drowning out chat and game
@@ -953,7 +954,9 @@ void CL_XerpKickEcho(void)
     }
     if (xf_mode.m4_burst)
         return;                     // burst mode climbs nothing
-    if (!xf_enabled_mz(MZ_ROCKET))
+    // the mirror also runs for the kick-cancel experiment, which needs A
+    // to subtract even when the M4 is outside cl_xerp_fire_weapons
+    if (!xf_enabled_mz(MZ_ROCKET) && !cl_xerp_kick_cancel->integer)
         return;                     // M4 opted out: climb stays server-timed
 
     if (!xka.shots) {
@@ -1152,8 +1155,15 @@ float CL_XerpKickDelta(float lerp, float kick_pitch)
     // predicted (raise hold, watchdog pause) raise it too — so S can
     // never double-step one shot at any RTT, and catches up to reality
     // with queued classic-rate pieces when predictions were withheld
+    // the generator only runs when the M4's climb is actually predicted:
+    // with the M4 outside cl_xerp_fire_weapons the mirror is inert, and
+    // under cl_xerp_kick_cancel S must stay 0 (render kick minus A —
+    // EXPERIMENT: view punch only; the server fires along view + kick,
+    // so the ballistic climb remains and bullets land above the
+    // crosshair — a feel toy vs bots, not a competitive setting)
     if (cl_xerp_fire->integer && !cls.demo.playback &&
         cl.frame.clientNum == cl.clientNum && xf.prev_attack &&
+        xf_enabled_mz(MZ_ROCKET) && !cl_xerp_kick_cancel->integer &&
         !xf_mode.m4_burst && !xkg.stalled) {
         int target = xka.shots;
         unsigned i;
