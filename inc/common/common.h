@@ -98,6 +98,14 @@ const char  *Com_GetLastError(void);
 q_noreturn
 void        Com_Quit(const char *reason, error_type_t type);
 
+// Worker threads (the render thread) may print and raise errors: prints
+// are queued and emitted by the main thread in Com_FlushWorker, and
+// Com_Error longjmps to the worker's own abort point, with the error
+// re-raised on the main thread by Com_FlushWorker.
+#include <setjmp.h>
+void        Com_EnterWorker(jmp_buf *abort_point);
+void        Com_FlushWorker(void);
+
 void        Com_SetColor(color_index_t color);
 
 void        Com_Address_g(genctx_t *ctx);

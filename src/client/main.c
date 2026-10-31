@@ -3331,6 +3331,11 @@ unsigned CL_Frame(unsigned msec)
         } else if (ref_extra > ref_msec * 4) {
             ref_extra = ref_msec;
         }
+
+        // with the render thread, build a frame only once the previous
+        // one is done: as late as possible, never queued behind another
+        if (ref_frame && !R_FrameReady())
+            ref_frame = false;
         break;
     case SYNC_MAXFPS:
         // everything ticks in sync with refresh
@@ -3338,6 +3343,8 @@ unsigned CL_Frame(unsigned msec)
             if (!cl.sendPacketNow) {
                 return 0;
             }
+            ref_frame = false;
+        } else if (!R_FrameReady()) {
             ref_frame = false;
         }
         break;

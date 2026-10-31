@@ -362,6 +362,9 @@ Win_SetMode
 */
 void Win_SetMode(void)
 {
+    // keep display mode changes out of a swap on the render thread (r_thread)
+    R_WaitIdle();
+
     // set full screen mode if requested
     if (vid_fullscreen->integer > 0) {
         LONG ret;
@@ -481,6 +484,7 @@ static void Win_Activate(WPARAM wParam)
     }
 
     if (win.flags & QVF_FULLSCREEN) {
+        R_WaitIdle();
         if (active == ACT_ACTIVATED) {
             ShowWindow(win.wnd, SW_RESTORE);
         } else {

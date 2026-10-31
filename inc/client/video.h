@@ -35,6 +35,9 @@ typedef struct {
     void *(*get_proc_addr)(const char *sym);
     void (*swap_buffers)(void);
     void (*swap_interval)(int val);
+    // make the GL context current on the calling thread, or release it;
+    // optional, the render thread (r_thread) needs it
+    bool (*make_current)(bool current);
 
     char *(*get_selection_data)(void);
     char *(*get_clipboard_data)(void);
