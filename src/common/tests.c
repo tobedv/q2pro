@@ -881,9 +881,10 @@ static void Com_TestTime_f(void)
                backwards + mismatched, backwards, mismatched, count);
 }
 
-// How long NET_SleepUs (cl_sleep) really sleeps. A packet ends a sleep
-// early, so early wakes are counted, not failed; a sleep that runs long
-// on average means the timer is tick-based and cl_sleep can't work.
+// How long NET_SleepUs (cl_sleep) really sleeps. A packet or NET_Wake (the
+// render thread) ends a sleep early, so early wakes are counted, not
+// failed; a sleep that runs long on average means the timer is tick-based
+// and cl_sleep can't work.
 static void Com_TestSleep_f(void)
 {
     unsigned usec = Cmd_Argc() > 1 ? Q_clip(Q_atoi(Cmd_Argv(1)), 1, 100000) : 250;
@@ -926,6 +927,48 @@ static void worker_capture(int target, const char *buffer, size_t len)
     memcpy(worker_text + worker_len, buffer, len);
     worker_len += len;
     worker_text[worker_len] = 0;
+}
+
+static void *wake_thread(void *arg)
+{
+    Sys_Sleep(5);
+    NET_Wake();
+    return NULL;
+}
+
+// NET_Wake from another thread ends a long NET_SleepUs at once, and a
+// wake that comes first ends the next sleep: the render thread uses it
+// to start the next frame without waiting for the next millisecond.
+static void Com_TestWake_f(void)
+{
+    pthread_t thread;
+    uint64_t start, took, total = 0;
+    int i, errors = 0, count = 10;
+
+    NET_SleepUs(1);     // take any wake-up still pending
+
+    for (i = 0; i < count; i++) {
+        if (pthread_create(&thread, NULL, wake_thread, NULL)) {
+            Com_EPrintf("Couldn't create test thread\n");
+            return;
+        }
+        start = Sys_Microseconds();
+        NET_SleepUs(500000);
+        took = Sys_Microseconds() - start;
+        pthread_join(thread, NULL);
+        errors += took > 100000;
+        total += took;
+    }
+
+    NET_Wake();
+    start = Sys_Microseconds();
+    NET_SleepUs(500000);
+    took = Sys_Microseconds() - start;
+    errors += took > 100000;
+
+    Com_Printf("%d failures, %d wakes tested (woken after %u usec on average, "
+               "the wake came after ~5000; pending wake: %u usec)\n",
+               errors, count + 1, (unsigned)(total / count), (unsigned)took);
 }
 
 static void *worker_print_thread(void *arg)
@@ -1154,6 +1197,7 @@ static const cmdreg_t c_test[] = {
     { "extract", Com_Extract_f },
     { "timetest", Com_TestTime_f },
     { "sleeptest", Com_TestSleep_f },
+    { "waketest", Com_TestWake_f },
     { "workertest", Com_TestWorker_f },
     { "zonetest", Com_TestZone_f },
     { NULL }

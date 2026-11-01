@@ -3190,6 +3190,9 @@ static int ref_msec, phys_msec, main_msec;
 static int ref_extra, phys_extra, main_extra;
 static sync_mode_t sync_mode;
 
+// a refresh is due but the render thread is still busy with the last one
+static bool ref_waiting;
+
 #define MIN_PHYS_HZ 10
 #define MAX_PHYS_HZ 250
 #define MIN_REF_HZ MIN_PHYS_HZ
@@ -3304,6 +3307,8 @@ unsigned CL_Frame(unsigned msec)
 
     CL_ProcessEvents();
 
+    ref_waiting = false;
+
     switch (sync_mode) {
     case SYNC_TIMEDEMO:
         // timedemo just runs at full speed
@@ -3337,8 +3342,10 @@ unsigned CL_Frame(unsigned msec)
 
         // with the render thread, build a frame only once the previous
         // one is done: as late as possible, never queued behind another
-        if (ref_frame && !R_FrameReady())
+        if (ref_frame && !R_FrameReady()) {
             ref_frame = false;
+            ref_waiting = true;
+        }
         break;
     case SYNC_MAXFPS:
         // everything ticks in sync with refresh
@@ -3348,8 +3355,9 @@ unsigned CL_Frame(unsigned msec)
             }
             ref_frame = false;
         } else if (!R_FrameReady()) {
-            // the render thread is still presenting: retry next loop
-            // rather than drop this refresh and halve the frame rate
+            // the render thread is still presenting: retry as soon as it
+            // is done rather than drop this refresh
+            ref_waiting = true;
             if (!cl.sendPacketNow) {
                 return 0;
             }
@@ -3483,7 +3491,11 @@ bool CL_ProcessEvents(void)
     CL_RunDiscord();
 #endif //rekkie -- discord -- e
 
-    return cl.sendPacketNow;
+    // Run a frame now rather than at the next millisecond: an urgent
+    // packet, or a refresh that only waited for the render thread (which
+    // ends the main loop's sleep when it is done). Frames would otherwise
+    // snap to whole milliseconds: 1.1 ms of rendering would mean 500 fps.
+    return cl.sendPacketNow || (ref_waiting && R_FrameReady());
 }
 
 //============================================================================

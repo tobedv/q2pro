@@ -89,8 +89,16 @@ static inline void Z_CountAlloc(const zhead_t *z)
     s->bytes += z->size;
 }
 
+#define Z_Valid(z) \
+    ((z)->magic == Z_MAGIC && (z)->tag != TAG_FREE)
+
 #define Z_Validate(z) \
-    Q_assert((z)->magic == Z_MAGIC && (z)->tag != TAG_FREE)
+    Q_assert(Z_Valid(z))
+
+// For walks under z_lock: a failed assert raises an error, and the error
+// path frees memory, which would deadlock on the lock still held.
+#define Z_ValidateLocked(z) \
+    do { if (!Z_Valid(z)) { pthread_mutex_unlock(&z_lock); Z_Validate(z); } } while (0)
 
 // walks (and validates) the whole chain
 static size_t Z_CountTag(memtag_t tag, size_t *bytes)
@@ -101,7 +109,7 @@ static size_t Z_CountTag(memtag_t tag, size_t *bytes)
     *bytes = 0;
     pthread_mutex_lock(&z_lock);
     LIST_FOR_EACH(zhead_t, z, &z_chain, entry) {
-        Z_Validate(z);
+        Z_ValidateLocked(z);
         if (z->tag == tag || (tag == TAG_FREE && z->tag >= TAG_MAX)) {
             count++;
             *bytes += z->size;
@@ -283,7 +291,7 @@ void Z_FreeTags(memtag_t tag)
 
     pthread_mutex_lock(&z_lock);
     LIST_FOR_EACH_SAFE(zhead_t, z, n, &z_chain, entry) {
-        Z_Validate(z);
+        Z_ValidateLocked(z);
         if (z->tag == tag) {
             Z_CountFree(z);
             List_Remove(&z->entry);

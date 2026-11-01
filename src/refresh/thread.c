@@ -49,6 +49,7 @@ thread never waits on the GPU.
 #include "common/cmodel.h"
 #include "common/common.h"
 #include "common/cvar.h"
+#include "common/net/net.h"
 #include "common/zone.h"
 #include "client/client.h"
 #include "client/video.h"
@@ -405,6 +406,10 @@ static void *rt_main(void *arg)
         pthread_mutex_lock(&rt.lock);
         rt.busy = false;
         pthread_cond_signal(&rt.idle);    // only the main thread waits
+        // a frame may be waiting for this one; don't let the main loop
+        // sleep through it (see CL_ProcessEvents)
+        if (job == JOB_FRAME)
+            NET_Wake();
         if (job == JOB_QUIT)
             break;
     }
